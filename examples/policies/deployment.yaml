@@ -1,0 +1,23 @@
+license: file:./axiomatics_ADS_CAQ.license
+
+engine:
+  mode: ads_caq
+
+domain:
+  path: ./domain_all_authz_enabled.yaml
+  refreshInterval: 30 seconds
+
+server:
+  port: 8080
+
+logging:
+  level.com.axiomatics.audit: info
+
+authentication:
+  enabled: false
+
+authzen:
+  enabled: true
+
+identity:
+  constant: ads-test-local

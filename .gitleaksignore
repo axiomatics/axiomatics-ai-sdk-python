@@ -1,0 +1,6 @@
+# Known false positives in git history (gitleaks fingerprints: commit:file:rule:line).
+# The current tree no longer contains these; history is kept rather than rewritten.
+
+# A test-only HMAC key for an unverified demo JWT (tests/fastmcp/test_human_approval.py); now
+# generated at runtime with secrets.token_hex.
+b0b57de84a13870652f60f4297531e273657c14b:tests/fastmcp/test_human_approval.py:generic-api-key:22

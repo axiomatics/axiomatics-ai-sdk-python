@@ -1,0 +1,250 @@
+# Build recipe (PEP 517/518): how tools turn this source into a wheel/sdist. `requires` are
+# build-time-only deps (isolated from runtime `dependencies`); `build-backend` does the build.
+[build-system]
+requires = ["hatchling>=1.26", "hatch-fancy-pypi-readme>=24.1"]
+build-backend = "hatchling.build"
+
+[project]
+name = "axiomatics-ai-sdk"
+version = "0.1.0"
+description = "Externalized ABAC for AI applications: enforce PDP policies (XACML 3.0 JSON or OpenID AuthZEN) across agents, tools, MCP servers, A2A agents, and RAG"
+# The PyPI page is README.md with its relative links made absolute: see
+# [tool.hatch.metadata.hooks.fancy-pypi-readme] below.
+dynamic = ["readme"]
+requires-python = ">=3.11"
+authors = [{ name = "Axiomatics" }]
+keywords = [
+    "authorization", "xacml", "authzen", "langchain", "a2a", "mcp", "agents", "ads",
+    "abac", "attribute-based access control",
+    "pbac", "policy-based access control",
+    "pdp", "policy decision point",
+    "pep", "policy enforcement point",
+]
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "License :: OSI Approved :: Apache Software License",
+]
+dependencies = [
+    "httpx>=0.28.1",
+    "pydantic>=2.12.5",
+    "cachetools>=5.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/axiomatics/axiomatics-ai-sdk-python"
+Repository = "https://github.com/axiomatics/axiomatics-ai-sdk-python"
+Documentation = "https://github.com/axiomatics/axiomatics-ai-sdk-python/blob/main/docs/README.md"
+Changelog = "https://github.com/axiomatics/axiomatics-ai-sdk-python/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# One extra per integration; combine the ones you use. The core (Authorizer, the configs, the
+# context providers) needs none. The OpenAI Agents and Google ADK adapters import no SDK of
+# their own, so they need no extra either: you bring the framework.
+#
+# Upper bounds cap a dependency below the next major (or, before 1.0, the next minor) we
+# haven't tested: the SDK reaches into these frameworks' APIs, so a fresh install must not pull
+# in one that moved them (fastmcp 4 / mcp 2 did).
+langchain-agents = [
+    "langchain>=1.2.15",
+]
+# create_authorized_deep_agent: deepagents is pre-1.0 and the factory builds its sub-agent specs.
+deepagents = [
+    "langchain>=1.2.15",
+    "deepagents>=0.5,<0.8",
+]
+# Decoding and verifying bearer tokens (DefaultServerContextProvider, AgentIdentityContextProvider,
+# verify_access_token); the server-side extras below include it.
+jwt = [
+    "pyjwt[crypto]>=2.15.1",
+]
+langchain-mcp = [
+    "langchain>=1.2.15",
+    "langchain-mcp-adapters",
+]
+rag = [
+    "langchain>=1.2.15",
+    "langchain-community",
+]
+fastmcp = [
+    "fastmcp>=3.2.4,<4",
+    "pyjwt[crypto]>=2.15.1",
+]
+tool-decorator = [
+    "fastmcp>=3.2.4,<4",
+    "pyjwt[crypto]>=2.15.1",
+]
+# A2A wire enforcement (A2AClientAuthZ / A2AAuthZMiddleware) imports no a2a-sdk at runtime —
+# it works on the JSON-RPC wire (pure ASGI middleware + an httpx.Auth). Its only extra
+# runtime dep is PyJWT, for the default JWT-header identity. (a2a-sdk is an examples/tests
+# dep — see the `examples` dependency group.)
+a2a = [
+    "pyjwt[crypto]>=2.15.1",
+]
+# Gateway (reverse proxy fronting A2A + MCP): Starlette for the router/mounts, fastmcp for
+# the MCP proxy routes, pyjwt for JWT identity. A2A routes reuse the pure-ASGI middleware
+# (no a2a-sdk at runtime). httpx comes from the core deps.
+gateway = [
+    "fastmcp>=3.2.4,<4",
+    "pyjwt[crypto]>=2.15.1",
+    "starlette>=0.37.0",
+]
+# Strands MCP-client authorization. Unlike the google_adk path (which imports no ADK and so
+# needs no extra), the strands adapter registers a Strands intervention handler, so it imports
+# strands at runtime — hence a dedicated extra. 1.43 is the first release with the
+# interventions API (strands.interventions) the handler is built on.
+strands = [
+    "strands-agents>=1.43.0",
+]
+# Claude Agent SDK authorization. The adapter returns SDK types (PermissionResultDeny,
+# HookMatcher), so it imports claude_agent_sdk at runtime — hence a dedicated extra.
+claude-agent-sdk = [
+    "claude-agent-sdk>=0.2.0",
+]
+# LLM content enforcement (Feature 1): LLMAttributeEnricher classifies content into ADS
+# attributes via litellm. Provider-agnostic (hosted models, or local ollama for privacy).
+llm-enrichment = [
+    "litellm>=1.103.0",
+]
+# Every integration extra.
+all = [
+    "axiomatics-ai-sdk[langchain-agents,deepagents,jwt,langchain-mcp,rag,fastmcp,tool-decorator,a2a,gateway,strands,claude-agent-sdk,llm-enrichment]",
+]
+
+# For working on the SDK, not for installing it (PEP 735): `uv sync` installs both groups.
+[dependency-groups]
+examples = [
+    "streamlit>=1.56.0",
+    "langchain-litellm",
+    "langchain-classic>=1.0.7",
+    "langchain>=1.2.15",
+    "mcp",
+    "python-dotenv>=1.2.2",
+    # RAG examples: a real Qdrant store (in-memory mode) for the static_rag example.
+    "langchain-qdrant",
+    "qdrant-client",
+    # A2A / MCP-client examples across the agent frameworks. google-adk and strands both pin
+    # a2a-sdk to the 0.3.x line, so resolving these together yields a2a-sdk 0.3.x (which the
+    # wire-level enforcement handles the same as 1.x). a2a-sdk is named explicitly because the
+    # self-wired A2A example + a2a integration tests import a2a.server directly.
+    "a2a-sdk>=0.3.0",
+    "google-adk[a2a]",
+    "strands-agents[a2a]",
+    "strands-agents-tools[a2a-client]",
+    "openai-agents>=0.17.0",
+]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-cov>=6.0",
+    "ruff>=0.9",
+    # Real vector stores for the RAG end-to-end dialect tests (tests skip if absent).
+    "langchain-chroma",
+    "langchain-qdrant",
+    "qdrant-client",
+]
+
+[tool.uv]
+default-groups = ["dev", "examples"]
+# Transitive floors for Snyk / trivy High+ findings (not direct SDK deps).
+constraint-dependencies = [
+    "anyio>=4.14.2",
+    "cryptography>=50.0.0",
+    "gitpython>=3.1.59",
+    "h2>=4.4.1",
+    "langgraph-checkpoint>=4.1.1",
+    "langsmith>=0.8.18",
+    "pillow>=12.3.0",
+    "pyasn1>=0.6.4",
+    "tornado>=6.5.8",
+    "urllib3>=2.8.0",
+]
+
+# Ship only the library package — never examples/ or tests/. The py.typed marker inside it
+# comes along, so downstream type-checkers see the (extensive) type hints.
+[tool.hatch.build.targets.wheel]
+packages = ["axiomatics_ai"]
+exclude = ["axiomatics_ai/**/README.md"]   # notes for readers of the source, not runtime files
+
+# The sdist would otherwise take every git-tracked file (tests, examples, CI config). Anchored
+# with "/": the patterns are gitignore-style, so "README.md" alone matches every README.
+[tool.hatch.build.targets.sdist]
+include = ["/axiomatics_ai", "/README.md", "/LICENSE"]
+exclude = ["axiomatics_ai/**/README.md"]
+
+# README.md's links are relative so they work on Bitbucket and GitHub; on PyPI they would not
+# resolve, so the long description is README.md with them made absolute. Images first, so the
+# link rule (which skips absolute URLs) leaves them alone.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '(!\[[^\]]*\])\((?!https?://)([^)]+)\)'
+replacement = '\1(https://raw.githubusercontent.com/axiomatics/axiomatics-ai-sdk-python/main/\2)'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '(\[[^\]]*\])\((?!https?://|mailto:|#)([^)]+)\)'
+replacement = '\1(https://github.com/axiomatics/axiomatics-ai-sdk-python/blob/main/\2)'
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "ads_integration: requires ADS jar in examples/policies/ — skipped only when jar is missing; use -m ads_integration to run these tests alone",
+]
+
+# Ruff serves as both linter and security scanner (the `S` rules are Bandit's checks).
+# The per-file-ignores below are the important part: production rules applied to test and
+# example code produce ~95% false positives (742 of 751 `S` findings were `assert` in tests),
+# which is what buries real findings when this feeds SonarQube.
+[tool.ruff]
+target-version = "py311"          # the `requires-python` floor — NOT the local 3.14, or
+                                  # 3.11-incompatible syntax would pass unnoticed
+line-length = 120
+extend-exclude = ["examples/policies"] # vendored ADS jars/licenses/domain YAML — not our source
+
+[tool.ruff.lint]
+# ARG (unused-argument) is deliberately NOT selected: this SDK is interface-heavy — context
+# providers implement get_subject(headers)/get_action(name, context) and framework hooks take
+# **kwargs, so signatures must match a protocol whether or not every parameter is read.
+# Flagging those is 15 findings of pure noise with no way to fix them but to break the contract.
+select = ["E", "F", "W", "B", "SIM", "UP", "RET", "BLE", "S", "RUF", "D"]
+ignore = [
+    # Existing style runs to 240 chars in places. Reflowing every long line would produce a
+    # large diff with no security benefit; enforce length in review, not the linter.
+    "E501",
+    # `×`, `–`, `∨` in docstrings/comments are intentional maths and typography, not homoglyph
+    # smuggling. The rule exists to catch lookalike identifiers; none of these are identifiers.
+    "RUF002",
+    "RUF003",
+    # EnforcementAction/EnforcementPoint are public API. `class X(str, Enum)` and `StrEnum`
+    # differ in how members format/serialise, so "modernising" them risks changing the wire
+    # representation of a published enum for a purely cosmetic gain.
+    "UP042",
+    # Docstrings (Google style, convention below): magic methods and __init__ are documented on
+    # the class, so they need no docstring of their own.
+    "D105",
+    "D107",
+]
+
+[tool.ruff.lint.pydocstyle]
+# Google style with the types in parentheses: `subject (dict): ...`. Checked on public code;
+# tests and examples are exempt (see per-file-ignores).
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: `assert` IS the assertion mechanism (S101); fixtures/mocks hold mutable class
+# attributes (RUF012); conftest shells out to java/lsof to run a real ADS (S603/S607); and
+# a few tests import inside test bodies (E402).
+"tests/**" = [
+    "D",
+    "S101", "BLE001", "RUF012", "E402",
+    "S603", "S607", "SIM105", "E731", "RUF059",
+]
+# Examples: E402 — a few examples run load_dotenv() before importing modules that read env vars.
+# S603/S607/S310 are the local ADS dev-runner shelling out to java/lsof and polling localhost.
+"examples/**" = ["D", "S101", "E402", "S603", "S607", "S310", "BLE001", "RUF012"]

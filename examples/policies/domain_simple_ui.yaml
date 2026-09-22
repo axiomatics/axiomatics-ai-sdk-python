@@ -1,0 +1,252 @@
+identity: 22222222-3333-4444-5555-666666666666
+metadata:
+  description: >
+    Local ADS domain for the simple-ui example.
+
+    Three action types are used by the SDK (all configurable in MiddlewareConfig):
+      tool_visibility  — MultiRequest: which tools are shown to the LLM (one sub-request per tool)
+      execute     — Single request: whether a specific tool call (with its args) is permitted
+      read        — MultiRequest: which records returned by a tool are visible (one per record)
+
+    Subject attribute:  username  (AccessSubject, first key = primary identifier)
+    Resource attributes:
+      tool_name   — the tool name, in tool_visibility and execute requests (+ any tool args on execute)
+      record_hash   — used for read multi-requests (stable hash of each record)
+
+    To support content-based record filtering (e.g. doc_type != classified), extend
+    filter_records to pass record attributes alongside record_hash.
+
+attributes:
+  username:
+    xacmlId: username
+    category: AccessSubject
+    datatype: string
+  name:
+    xacmlId: name
+    category: Action
+    datatype: string
+  tool_name:
+    xacmlId: tool_name
+    category: Resource
+    datatype: string
+  account_id:
+    xacmlId: account_id
+    category: Resource
+    datatype: string
+  record_hash:
+    xacmlId: record_hash
+    category: Resource
+    datatype: string
+  doc_type:
+    xacmlId: doc_type
+    category: Resource
+    datatype: string
+
+policy:
+  mainPolicyId: 'http://example.com/axiomatics/demo/ToolAuthorizationByUser'
+  xacmlSpecifications:
+    - >-
+      <xacml3:PolicySet Version="1.0"
+      xmlns:xacml3="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17"
+      PolicyCombiningAlgId="urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:first-applicable"
+      PolicySetId="http://example.com/axiomatics/demo/ToolAuthorizationByUser">
+          <xacml3:Description>Root PolicySet containing three child Policies: tool listing, tool execution, record reading.</xacml3:Description>
+          <xacml3:Target/>
+
+          <!-- ═══════════════════════════════════════════════════════════════════
+               Policy 1: Tool listing — which tools does the LLM see?
+               Action: tool_visibility | Resource attribute: tool_name
+               ═══════════════════════════════════════════════════════════════════ -->
+          <xacml3:Policy Version="1.0"
+          RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+          PolicyId="http://example.com/axiomatics/demo/ToolListing">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_visibility</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+
+              <xacml3:Rule RuleId="alice-can-list-all-tools" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">alice</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <xacml3:Rule RuleId="bob-can-list-search-docs" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">bob</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">search_docs</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <xacml3:Rule RuleId="bob-can-list-get-account-balance" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">bob</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">get_account_balance</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+          </xacml3:Policy>
+
+          <!-- ═══════════════════════════════════════════════════════════════════
+               Policy 2: Tool execution — can the user call this tool with these args?
+               Action: execute | Resource attributes: tool_name + any tool args
+               ═══════════════════════════════════════════════════════════════════ -->
+          <xacml3:Policy Version="1.0"
+          RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+          PolicyId="http://example.com/axiomatics/demo/ToolExecution">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_invocation</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+
+              <xacml3:Rule RuleId="alice-can-execute-any-tool" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">alice</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <!-- Bob can call search_docs with any query -->
+              <xacml3:Rule RuleId="bob-can-execute-search-docs" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">bob</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">search_docs</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <!-- Bob can only call get_account_balance for account ACC-001.
+                   The SDK passes tool args through get_resource(args={"account_id": "ACC-001"})
+                   so the account_id is included in the resource category of this request. -->
+              <xacml3:Rule RuleId="bob-can-execute-get-account-balance-for-acc-001" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">bob</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">get_account_balance</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">ACC-001</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="account_id" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+          </xacml3:Policy>
+
+          <!-- ═══════════════════════════════════════════════════════════════════
+               Policy 3: Record reading — which records may the user see?
+               Action: read | Resource attribute: record_hash (stable hash per record)
+               For content-based filtering (e.g. doc_type != classified), extend
+               filter_records to include record attributes alongside record_hash.
+               ═══════════════════════════════════════════════════════════════════ -->
+          <xacml3:Policy Version="1.0"
+          RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+          PolicyId="http://example.com/axiomatics/demo/RecordRead">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">post_invocation</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+
+              <!-- Alice may read all records -->
+              <xacml3:Rule RuleId="alice-can-read-all-records" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">alice</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <!-- Bob may read records only when doc_type != classified.
+                   Using first-applicable: deny classified first, then permit the rest.
+                   Requires filter_records to pass doc_type as a resource attribute. -->
+              <xacml3:Rule RuleId="bob-deny-classified-records" Effect="Deny">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">bob</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">classified</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="doc_type" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <xacml3:Rule RuleId="bob-can-read-non-classified-records" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">bob</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+          </xacml3:Policy>
+
+      </xacml3:PolicySet>

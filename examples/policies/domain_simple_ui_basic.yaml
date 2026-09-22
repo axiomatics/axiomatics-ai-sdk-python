@@ -1,0 +1,70 @@
+identity: 11111111-2222-3333-4444-555555555555
+metadata:
+  description: Local ADS domain for the LangChain demo app tool visibility flow.
+
+attributes:
+  username:
+    xacmlId: username
+    category: AccessSubject
+    datatype: string
+  name:
+    xacmlId: name
+    category: Action
+    datatype: string
+
+policy:
+  mainPolicyId: 'http://example.com/axiomatics/demo/ToolVisibility'
+  xacmlSpecifications:
+    - >-
+      <xacml3:Policy Version="1.0"
+      xmlns:xacml3="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17"
+      RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+      PolicyId="http://example.com/axiomatics/demo/ToolVisibility">
+          <xacml3:Description>Local ADS policy for the LangChain demo app.</xacml3:Description>
+          <xacml3:PolicyDefaults>
+              <xacml3:XPathVersion>http://www.w3.org/TR/1999/REC-xpath-19991116</xacml3:XPathVersion>
+          </xacml3:PolicyDefaults>
+          <xacml3:Target>
+              <xacml3:AnyOf>
+                  <xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_visibility</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name"
+                          DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf>
+              </xacml3:AnyOf>
+          </xacml3:Target>
+          <xacml3:Rule RuleId="allow-alice" Effect="Permit">
+              <xacml3:Target>
+                  <xacml3:AnyOf>
+                      <xacml3:AllOf>
+                          <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                              <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">alice</xacml3:AttributeValue>
+                              <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username"
+                              DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                          </xacml3:Match>
+                      </xacml3:AllOf>
+                  </xacml3:AnyOf>
+              </xacml3:Target>
+          </xacml3:Rule>
+          <xacml3:Rule RuleId="allow-bob" Effect="Permit">
+              <xacml3:Target>
+                  <xacml3:AnyOf>
+                      <xacml3:AllOf>
+                          <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                              <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">bob</xacml3:AttributeValue>
+                              <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username"
+                              DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                          </xacml3:Match>
+                      </xacml3:AllOf>
+                  </xacml3:AnyOf>
+              </xacml3:Target>
+          </xacml3:Rule>
+      </xacml3:Policy>

@@ -1,0 +1,171 @@
+identity: 88888888-9999-aaaa-bbbb-cccccccccccc
+metadata:
+  description: >
+    Domain for the human-approval examples: a payments agent whose large payments need a
+    human's approval before they run.
+
+    The two ways a policy can ask for a human's approval:
+      - Deny + advice "require-approval": the SDK asks, then evaluates the call again with the
+        environment attribute approval_granted = true, and that second decision is final.
+      - Permit + obligation "require-approval": the SDK asks, and the approval fulfils the
+        obligation, so the Permit stands (no second PDP call).
+
+    Subject attribute:     username
+    Action attribute:      name (= "tool_visibility" / "tool_invocation")
+    Resource attributes:   tool_name, amount (double)
+    Environment attribute: approval_granted (boolean, set by the SDK after approval)
+
+    Policies:
+      Tool visibility — every known user sees the payment tools.
+      Tool invocation (first-applicable):
+        1. list_invoices: permitted.
+        2. pay_invoice up to 100: permitted.
+        3. pay_invoice with approval_granted: permitted.
+        4. pay_invoice otherwise: denied, with advice require-approval.
+        5. cancel_invoice: permitted, with obligation require-approval.
+        6. Anything else: denied.
+
+attributes:
+  username:
+    xacmlId: username
+    category: AccessSubject
+    datatype: string
+  name:
+    xacmlId: name
+    category: Action
+    datatype: string
+  tool_name:
+    xacmlId: tool_name
+    category: Resource
+    datatype: string
+  amount:
+    xacmlId: amount
+    category: Resource
+    datatype: double
+  approval_granted:
+    xacmlId: approval_granted
+    category: Environment
+    datatype: boolean
+
+policy:
+  mainPolicyId: 'http://example.com/axiomatics/examples/HumanApproval'
+  xacmlSpecifications:
+    - >-
+      <xacml3:PolicySet Version="1.0"
+      xmlns:xacml3="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17"
+      PolicyCombiningAlgId="urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:first-applicable"
+      PolicySetId="http://example.com/axiomatics/examples/HumanApproval">
+          <xacml3:Target/>
+
+          <!-- Tool visibility: every known user sees the payment tools. -->
+          <xacml3:Policy Version="1.0" PolicyId="http://example.com/axiomatics/examples/HumanApproval/Visibility"
+          RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_visibility</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              <xacml3:Rule RuleId="known-users-see-payment-tools" Effect="Permit">
+                  <xacml3:Condition>
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-greater-than">
+                          <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag-size">
+                              <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                                  AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                          </xacml3:Apply>
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#integer">0</xacml3:AttributeValue>
+                      </xacml3:Apply>
+                  </xacml3:Condition>
+              </xacml3:Rule>
+              <xacml3:Rule RuleId="deny-anonymous" Effect="Deny"/>
+          </xacml3:Policy>
+
+          <!-- Tool invocation: large payments need a human's approval. -->
+          <xacml3:Policy Version="1.0" PolicyId="http://example.com/axiomatics/examples/HumanApproval/Invocation"
+          RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_invocation</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+
+              <xacml3:Rule RuleId="list-invoices" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">list_invoices</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <xacml3:Rule RuleId="small-payment" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">pay_invoice</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:double-greater-than-or-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#double">100</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="amount" DataType="http://www.w3.org/2001/XMLSchema#double"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <xacml3:Rule RuleId="approved-payment" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">pay_invoice</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:boolean-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#boolean">true</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:3.0:attribute-category:environment"
+                              AttributeId="approval_granted" DataType="http://www.w3.org/2001/XMLSchema#boolean"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <xacml3:Rule RuleId="large-payment-needs-approval" Effect="Deny">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">pay_invoice</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+                  <xacml3:AdviceExpressions>
+                      <xacml3:AdviceExpression AdviceId="require-approval" AppliesTo="Deny">
+                          <xacml3:AttributeAssignmentExpression AttributeId="reason">
+                              <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">Payments over 100 need a human's approval</xacml3:AttributeValue>
+                          </xacml3:AttributeAssignmentExpression>
+                      </xacml3:AdviceExpression>
+                  </xacml3:AdviceExpressions>
+              </xacml3:Rule>
+
+              <xacml3:Rule RuleId="cancellation-needs-approval" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">cancel_invoice</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false" Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+                  <xacml3:ObligationExpressions>
+                      <xacml3:ObligationExpression ObligationId="require-approval" FulfillOn="Permit">
+                          <xacml3:AttributeAssignmentExpression AttributeId="reason">
+                              <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">Cancelling an invoice needs a human's approval</xacml3:AttributeValue>
+                          </xacml3:AttributeAssignmentExpression>
+                      </xacml3:ObligationExpression>
+                  </xacml3:ObligationExpressions>
+              </xacml3:Rule>
+
+              <xacml3:Rule RuleId="deny-everything-else" Effect="Deny"/>
+          </xacml3:Policy>
+      </xacml3:PolicySet>

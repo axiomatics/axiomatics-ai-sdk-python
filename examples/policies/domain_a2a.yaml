@@ -1,0 +1,112 @@
+identity: 33333333-4444-5555-6666-777777777777
+metadata:
+  description: >
+    Domain for the A2A (Agent2Agent) invocation example and integration tests.
+
+    Covers a2a_invocation — authorizing a JSON-RPC call to a remote agent. The inbound
+    side (A2AAuthZMiddleware) authorizes every method (message/send, tasks/get, ...);
+    the outbound side (A2AClientAuthZ) only the message sends it originates. Both send
+    the same XACML request, with the method as a resource attribute.
+
+    Subject attribute:  username
+    Action attribute:   name (= "a2a_invocation")
+    Resource attributes:
+      agent_name — the target/served agent identity
+      method  — the JSON-RPC method (message/send, SendMessage, tasks/get, ...)
+      skill   — best-effort skill hint from the message metadata, when present
+
+    Rules:
+      alice may call billing-agent (any method, any skill)
+      bob   may call billing-agent only with skill "refund" (a skill hint is only on
+            message sends, so bob's task methods are denied)
+      everyone else / everything else → Deny
+
+attributes:
+  username:
+    xacmlId: username
+    category: AccessSubject
+    datatype: string
+  name:
+    xacmlId: name
+    category: Action
+    datatype: string
+  agent_name:
+    xacmlId: agent_name
+    category: Resource
+    datatype: string
+  method:
+    xacmlId: method
+    category: Resource
+    datatype: string
+  skill:
+    xacmlId: skill
+    category: Resource
+    datatype: string
+
+policy:
+  mainPolicyId: 'http://example.com/axiomatics/examples/A2AInvocation'
+  xacmlSpecifications:
+    - >-
+      <xacml3:PolicySet Version="1.0"
+      xmlns:xacml3="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17"
+      PolicyCombiningAlgId="urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:first-applicable"
+      PolicySetId="http://example.com/axiomatics/examples/A2AInvocation">
+          <xacml3:Description>A2A message-send invocation policy.</xacml3:Description>
+          <xacml3:Target/>
+
+          <xacml3:Policy Version="1.0"
+          RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+          PolicyId="http://example.com/axiomatics/examples/A2AInvocationPolicy">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">a2a_invocation</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+
+              <!-- alice may send to billing-agent, any skill -->
+              <xacml3:Rule RuleId="alice-can-invoke-billing" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">alice</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">billing-agent</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="agent_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <!-- bob may send to billing-agent only with skill "refund" -->
+              <xacml3:Rule RuleId="bob-can-invoke-billing-refund" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">bob</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="username" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">billing-agent</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="agent_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">refund</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="skill" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+          </xacml3:Policy>
+
+      </xacml3:PolicySet>

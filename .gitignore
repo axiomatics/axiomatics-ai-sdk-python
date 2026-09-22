@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.coverage
+coverage.xml
+pytest-unit.xml
+htmlcov/
+
+# Virtual environments
+.venv
+
+# Environment variables
+.env
+
+# ADS files
+examples/policies/*.jar
+examples/policies/*.license

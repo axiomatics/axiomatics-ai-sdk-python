@@ -1,0 +1,17 @@
+# Excludes files from the Docker build context (what `docker build .` copies into the image
+# via `COPY . /src`). Like .gitignore, but for image builds — keeps the image small and, more
+# importantly, keeps secrets (.env) and the large ADS jars out of it.
+#
+# Must live at the build-context root (the repo root), because the gateway build context IS
+# the repo root: the image pip-installs the SDK, which needs pyproject.toml + the package
+# source here. The Dockerfile itself lives under examples/gateway/ (referenced via -f).
+.venv/
+.git/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+examples/policies/*.jar
+examples/policies/*.license
+**/.env
+*.log

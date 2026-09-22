@@ -1,0 +1,73 @@
+"""
+A2A SERVER — a Google ADK agent, optionally protected by Axiomatics authorization.
+
+The whole server a developer writes: build an ADK agent, expose it over A2A with
+``to_a2a()``, add ONE middleware line, and serve. ``A2AAuthZMiddleware`` authorizes every
+inbound message/send against ADS before the agent runs. Identity is read from the caller's
+``Authorization: Bearer <JWT>`` header (the default server context provider).
+
+  --no-authz   run the same server WITHOUT the middleware (to compare behaviour)
+
+Run order:
+  1. Start ADS with the A2A domain (examples/policies/domain_a2a.yaml) on PDP_BASE_URL.
+  2. python examples/a2a/adk_server.py            # serves on :9101 (add --no-authz to disable)
+  3. python examples/a2a/adk_client.py            # calls this server
+
+Config in .env: PDP_BASE_URL, LLM_MODEL, OPENROUTER_API_KEY
+"""
+import argparse
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import uvicorn
+from dotenv import load_dotenv
+from google.adk.agents import Agent
+from google.adk.models.lite_llm import LiteLlm
+from google.adk.a2a.utils.agent_to_a2a import to_a2a
+
+load_dotenv()
+
+from axiomatics_ai import AuthZConfig
+from axiomatics_ai.a2a import A2AAuthZMiddleware
+from axiomatics_ai import PDPConnection
+
+PORT = 9101
+
+
+def build_app(*, authz: bool):
+    agent = Agent(
+        name="billing",
+        model=LiteLlm(os.getenv("LLM_MODEL")),
+        # The billing address is a concrete, recognisable fact only this agent knows — seeing
+        # it in a caller's output proves the message actually reached (and was permitted to
+        # reach) this agent, versus being blocked upstream.
+        instruction=(
+            "You are the billing assistant for Acme Corp. When asked about billing, state that "
+            "the company billing address is '1200 Market Street, Suite 400, San Francisco, CA 94103'. "
+            "Answer briefly."
+        ),
+    )
+    app = to_a2a(agent, port=PORT)  # ADK builds a Starlette A2A app for the agent
+
+    if authz:
+        # ── The one-line integration: enforce ADS on every inbound message/send. ──
+        # agent_name is the ADS resource label (kept explicit because ADK card names
+        # can't contain hyphens; see domain_a2a.yaml). Identity = the inbound Bearer JWT.
+        app.add_middleware(
+            A2AAuthZMiddleware,
+            config=AuthZConfig(connection=PDPConnection(base_url=os.getenv("PDP_BASE_URL", "http://localhost:8080"))),
+            agent_name="billing-agent",
+        )
+    return app
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-authz", dest="authz", action="store_false",
+                        help="serve without the authorization middleware")
+    args = parser.parse_args()
+    print(f"ADK A2A server on :{PORT}  (authz={'on' if args.authz else 'OFF'})")
+    uvicorn.run(build_app(authz=args.authz), host="127.0.0.1", port=PORT)

@@ -1,0 +1,169 @@
+identity: 66666666-7777-8888-9999-aaaaaaaaaaaa
+metadata:
+  description: >
+    Domain for the intent-based access control example
+    (examples/langchain_agents/intent_based_access.py).
+
+    Each tool call is checked against what the USER asked for. The SDK's intent_enricher
+    classifies the user's own messages and sends the result as environment attributes of the
+    tool_invocation request; the policy compares them with the tool call.
+
+    Subject attribute:  username
+    Action attribute:   name (= "tool_invocation")
+    Resource attributes:
+      tool_name        — the tool being called
+      to, subject, body, query — the tool arguments
+    Environment attributes (from intent_enricher, default actions):
+      intent_actions            — the actions the user asked for
+      intent_<action>_recipients — who each action is aimed at (e.g. intent_send_recipients)
+      intent_available          — false when the intent could not be classified
+
+    Policy (first-applicable):
+      1. Deny when the intent is unavailable (fail closed).
+      2. Deny send_email unless "send" is among the user's intended actions.
+      3. Deny send_email when a recipient is not one the user named for "send".
+      4. Permit any other tool call.
+
+attributes:
+  username:
+    xacmlId: username
+    category: AccessSubject
+    datatype: string
+  name:
+    xacmlId: name
+    category: Action
+    datatype: string
+  tool_name:
+    xacmlId: tool_name
+    category: Resource
+    datatype: string
+  to:
+    xacmlId: to
+    category: Resource
+    datatype: string
+  subject:
+    xacmlId: subject
+    category: Resource
+    datatype: string
+  body:
+    xacmlId: body
+    category: Resource
+    datatype: string
+  query:
+    xacmlId: query
+    category: Resource
+    datatype: string
+  intent_actions:
+    xacmlId: intent_actions
+    category: Environment
+    datatype: string
+  intent_read_recipients:
+    xacmlId: intent_read_recipients
+    category: Environment
+    datatype: string
+  intent_search_recipients:
+    xacmlId: intent_search_recipients
+    category: Environment
+    datatype: string
+  intent_write_recipients:
+    xacmlId: intent_write_recipients
+    category: Environment
+    datatype: string
+  intent_send_recipients:
+    xacmlId: intent_send_recipients
+    category: Environment
+    datatype: string
+  intent_delete_recipients:
+    xacmlId: intent_delete_recipients
+    category: Environment
+    datatype: string
+  intent_pay_recipients:
+    xacmlId: intent_pay_recipients
+    category: Environment
+    datatype: string
+  intent_available:
+    xacmlId: intent_available
+    category: Environment
+    datatype: boolean
+
+policy:
+  mainPolicyId: 'http://example.com/axiomatics/examples/IntentBasedAccess'
+  xacmlSpecifications:
+    - >-
+      <xacml3:Policy Version="1.0"
+      xmlns:xacml3="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17"
+      RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+      PolicyId="http://example.com/axiomatics/examples/IntentBasedAccess">
+          <xacml3:Description>Tool calls must match the user's classified intent.</xacml3:Description>
+          <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+              <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                  <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_invocation</xacml3:AttributeValue>
+                  <xacml3:AttributeDesignator MustBePresent="false"
+                      Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                      AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+              </xacml3:Match>
+          </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+
+          <!-- 1. No classified intent → no tool call. -->
+          <xacml3:Rule RuleId="deny-when-intent-unavailable" Effect="Deny">
+              <xacml3:Condition>
+                  <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:not">
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:boolean-is-in">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#boolean">true</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:environment"
+                              AttributeId="intent_available" DataType="http://www.w3.org/2001/XMLSchema#boolean"/>
+                      </xacml3:Apply>
+                  </xacml3:Apply>
+              </xacml3:Condition>
+          </xacml3:Rule>
+
+          <!-- 2. send_email only when the user asked to send something. -->
+          <xacml3:Rule RuleId="deny-send-without-send-intent" Effect="Deny">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">send_email</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                          AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              <xacml3:Condition>
+                  <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:not">
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-is-in">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">send</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:environment"
+                              AttributeId="intent_actions" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Apply>
+                  </xacml3:Apply>
+              </xacml3:Condition>
+          </xacml3:Rule>
+
+          <!-- 3. ...and only to recipients the user named for sending. -->
+          <xacml3:Rule RuleId="deny-send-to-unintended-recipient" Effect="Deny">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">send_email</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                          AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              <xacml3:Condition>
+                  <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:not">
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-subset">
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="to" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:environment"
+                              AttributeId="intent_send_recipients" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Apply>
+                  </xacml3:Apply>
+              </xacml3:Condition>
+          </xacml3:Rule>
+
+          <!-- 4. Anything else the user may do. -->
+          <xacml3:Rule RuleId="permit-other-tool-calls" Effect="Permit"/>
+      </xacml3:Policy>

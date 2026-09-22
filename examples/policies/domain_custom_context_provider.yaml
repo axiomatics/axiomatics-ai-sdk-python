@@ -1,0 +1,123 @@
+identity: 44444444-5555-6666-7777-888888888888
+metadata:
+  description: >
+    Domain for the custom context provider example (examples/agents/custom_context_provider.py).
+
+    Covers tool_visibility (tool visibility) and tool_invocation (tool invocation).
+    Policies are written against the EmployeeContextProvider subject attributes
+    (email, department, clearance_level) instead of the default username attribute.
+
+    Subject attributes: email, department, clearance_level
+    Resource attributes:
+      tool_name — the tool name, in tool_visibility and tool_invocation requests
+
+attributes:
+  email:
+    xacmlId: email
+    category: AccessSubject
+    datatype: string
+  department:
+    xacmlId: department
+    category: AccessSubject
+    datatype: string
+  clearance_level:
+    xacmlId: clearance_level
+    category: AccessSubject
+    datatype: string
+  name:
+    xacmlId: name
+    category: Action
+    datatype: string
+  tool_name:
+    xacmlId: tool_name
+    category: Resource
+    datatype: string
+
+policy:
+  mainPolicyId: 'http://example.com/axiomatics/examples/CustomContextProvider'
+  xacmlSpecifications:
+    - >-
+      <xacml3:PolicySet Version="1.0"
+      xmlns:xacml3="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17"
+      PolicyCombiningAlgId="urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:first-applicable"
+      PolicySetId="http://example.com/axiomatics/examples/CustomContextProvider">
+          <xacml3:Description>Tool visibility and invocation policies using custom employee subject attributes.</xacml3:Description>
+          <xacml3:Target/>
+
+          <!-- Policy 1: Tool visibility — filter which tools the LLM sees -->
+          <xacml3:Policy Version="1.0"
+          RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+          PolicyId="http://example.com/axiomatics/examples/CustomContextProvider/ToolListing">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_visibility</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+
+              <!-- Top-secret clearance: can see all tools -->
+              <xacml3:Rule RuleId="top-secret-can-see-all-tools" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">top-secret</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="clearance_level" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <!-- Other clearance levels: can only see search_docs -->
+              <xacml3:Rule RuleId="standard-can-see-search-docs" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">search_docs</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+          </xacml3:Policy>
+
+          <!-- Policy 2: Tool invocation — authorize each tool call -->
+          <xacml3:Policy Version="1.0"
+          RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+          PolicyId="http://example.com/axiomatics/examples/CustomContextProvider/ToolExecution">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_invocation</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+
+              <!-- Top-secret clearance: can invoke any tool -->
+              <xacml3:Rule RuleId="top-secret-can-invoke-any-tool" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">top-secret</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="clearance_level" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+
+              <!-- Other clearance levels: can only invoke search_docs -->
+              <xacml3:Rule RuleId="standard-can-invoke-search-docs" Effect="Permit">
+                  <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                      <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">search_docs</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                              AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Match>
+                  </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              </xacml3:Rule>
+          </xacml3:Policy>
+
+      </xacml3:PolicySet>

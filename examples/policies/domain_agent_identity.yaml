@@ -1,0 +1,210 @@
+identity: 77777777-8888-9999-aaaa-bbbbbbbbbbbb
+metadata:
+  description: >
+    Domain for the verified agent identity examples: the FastMCP payments server
+    (examples/fastmcp/payments_server.py) called by a LangChain agent
+    (examples/fastmcp/payments_agent.py), and a LangChain agent behind its own API that
+    verifies the user's token client-side (examples/langchain_agents/agent_behind_api.py).
+
+    The subject comes from a VERIFIED OAuth access token (RFC 9068) via
+    AgentIdentityContextProvider: user_id (the delegating user; absent for Client
+    Credentials tokens), agent_id (client_id), actor_id (current actor), scopes, and the one
+    approved Rich Authorization Request entry (RFC 9396) as approved_* attributes.
+
+    Subject attributes:  user_id, agent_id, actor_id, scopes,
+                         approved_available, approved_amount (double), approved_creditor
+    Action attribute:    name (= "tool_invocation")
+    Resource attributes: tool_name, invoice_id, amount (double), creditor
+
+    Policies:
+      Tool visibility — a verified agent sees list_invoices and pay_invoice.
+      Tool invocation (first-applicable):
+        1. list_invoices: permitted with the payments.read scope.
+        2. pay_invoice: permitted only for a delegating user, with the payments.initiate scope,
+           within an approved RAR grant: amount <= approved_amount, creditor == approved_creditor.
+        3. Anything else: denied.
+
+attributes:
+  name:
+    xacmlId: name
+    category: Action
+    datatype: string
+  user_id:
+    xacmlId: user_id
+    category: AccessSubject
+    datatype: string
+  agent_id:
+    xacmlId: agent_id
+    category: AccessSubject
+    datatype: string
+  actor_id:
+    xacmlId: actor_id
+    category: AccessSubject
+    datatype: string
+  scopes:
+    xacmlId: scopes
+    category: AccessSubject
+    datatype: string
+  approved_available:
+    xacmlId: approved_available
+    category: AccessSubject
+    datatype: boolean
+  approved_amount:
+    xacmlId: approved_amount
+    category: AccessSubject
+    datatype: double
+  approved_creditor:
+    xacmlId: approved_creditor
+    category: AccessSubject
+    datatype: string
+  tool_name:
+    xacmlId: tool_name
+    category: Resource
+    datatype: string
+  amount:
+    xacmlId: amount
+    category: Resource
+    datatype: double
+  creditor:
+    xacmlId: creditor
+    category: Resource
+    datatype: string
+  invoice_id:
+    xacmlId: invoice_id
+    category: Resource
+    datatype: string
+
+policy:
+  mainPolicyId: 'http://example.com/axiomatics/examples/AgentIdentity'
+  xacmlSpecifications:
+    - >-
+      <xacml3:PolicySet Version="1.0"
+      xmlns:xacml3="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17"
+      PolicyCombiningAlgId="urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:first-applicable"
+      PolicySetId="http://example.com/axiomatics/examples/AgentIdentity">
+          <xacml3:Description>Payments tools for verified agents, within the user's approved grants.</xacml3:Description>
+          <xacml3:Target/>
+
+          <!-- Tool visibility: a verified agent sees the payments tools. -->
+          <xacml3:Policy Version="1.0"
+          RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+          PolicyId="http://example.com/axiomatics/examples/AgentIdentityVisibility">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_visibility</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                          AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              <xacml3:Rule RuleId="verified-agent-sees-payments-tools" Effect="Permit">
+                  <xacml3:Condition>
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-greater-than">
+                          <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag-size">
+                              <xacml3:AttributeDesignator MustBePresent="false"
+                                  Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                                  AttributeId="agent_id" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                          </xacml3:Apply>
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#integer">0</xacml3:AttributeValue>
+                      </xacml3:Apply>
+                  </xacml3:Condition>
+              </xacml3:Rule>
+          </xacml3:Policy>
+
+      <xacml3:Policy Version="1.0"
+      RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:first-applicable"
+      PolicyId="http://example.com/axiomatics/examples/AgentIdentityInvocation">
+          <xacml3:Description>Tool calls by verified agents, for delegating users, within approved grants.</xacml3:Description>
+          <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+              <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                  <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">tool_invocation</xacml3:AttributeValue>
+                  <xacml3:AttributeDesignator MustBePresent="false"
+                      Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                      AttributeId="name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+              </xacml3:Match>
+          </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+
+          <!-- 1. list_invoices: with the payments.read scope. -->
+          <xacml3:Rule RuleId="list-invoices-with-read-scope" Effect="Permit">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">list_invoices</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                          AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              <xacml3:Condition>
+                  <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-is-in">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">payments.read</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                          AttributeId="scopes" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Apply>
+              </xacml3:Condition>
+          </xacml3:Rule>
+
+          <!-- 2. pay_invoice: a delegating user, the scope, and inside the one approved RAR grant. -->
+          <xacml3:Rule RuleId="pay-within-approved-grant" Effect="Permit">
+              <xacml3:Target><xacml3:AnyOf><xacml3:AllOf>
+                  <xacml3:Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                      <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">pay_invoice</xacml3:AttributeValue>
+                      <xacml3:AttributeDesignator MustBePresent="false"
+                          Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                          AttributeId="tool_name" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                  </xacml3:Match>
+              </xacml3:AllOf></xacml3:AnyOf></xacml3:Target>
+              <xacml3:Condition>
+                  <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:and">
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-greater-than">
+                          <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag-size">
+                              <xacml3:AttributeDesignator MustBePresent="false"
+                                  Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                                  AttributeId="user_id" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                          </xacml3:Apply>
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#integer">0</xacml3:AttributeValue>
+                      </xacml3:Apply>
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-is-in">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">payments.initiate</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="scopes" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                      </xacml3:Apply>
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:boolean-is-in">
+                          <xacml3:AttributeValue DataType="http://www.w3.org/2001/XMLSchema#boolean">true</xacml3:AttributeValue>
+                          <xacml3:AttributeDesignator MustBePresent="false"
+                              Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                              AttributeId="approved_available" DataType="http://www.w3.org/2001/XMLSchema#boolean"/>
+                      </xacml3:Apply>
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:double-less-than-or-equal">
+                          <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:double-one-and-only">
+                              <xacml3:AttributeDesignator MustBePresent="false"
+                                  Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                                  AttributeId="amount" DataType="http://www.w3.org/2001/XMLSchema#double"/>
+                          </xacml3:Apply>
+                          <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:double-one-and-only">
+                              <xacml3:AttributeDesignator MustBePresent="false"
+                                  Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                                  AttributeId="approved_amount" DataType="http://www.w3.org/2001/XMLSchema#double"/>
+                          </xacml3:Apply>
+                      </xacml3:Apply>
+                      <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+                          <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-one-and-only">
+                              <xacml3:AttributeDesignator MustBePresent="false"
+                                  Category="urn:oasis:names:tc:xacml:3.0:attribute-category:resource"
+                                  AttributeId="creditor" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                          </xacml3:Apply>
+                          <xacml3:Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-one-and-only">
+                              <xacml3:AttributeDesignator MustBePresent="false"
+                                  Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                                  AttributeId="approved_creditor" DataType="http://www.w3.org/2001/XMLSchema#string"/>
+                          </xacml3:Apply>
+                      </xacml3:Apply>
+                  </xacml3:Apply>
+              </xacml3:Condition>
+          </xacml3:Rule>
+
+          <!-- 3. Anything else. -->
+          <xacml3:Rule RuleId="deny-everything-else" Effect="Deny"/>
+      </xacml3:Policy>
+      </xacml3:PolicySet>
