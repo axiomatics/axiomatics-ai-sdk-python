@@ -141,18 +141,34 @@ def _transform_dict(payload: dict, fn: Callable[[Any], Any], render: Callable[[s
 def _transform_mcp_result(payload: dict, fn: Callable[[Any], Any], render: Callable[[str], Any], unread: Any):
     """Transform an MCP ``CallToolResult``: ``structuredContent`` and the text that renders it.
 
-    Both are rewritten from the transformed data, so they stay in sync.
+    Both are rewritten from the transformed data, so they stay in sync. When nothing in
+    ``structuredContent`` changes, the text is filtered on its own too: it may hold more than
+    ``structuredContent`` does (records there, only a count here).
     """
     structured = payload["structuredContent"]
     out = _transform(structured, fn, render, unread)
-    if out is _UNRECOGNIZED or out is structured:
-        return out if out is _UNRECOGNIZED else payload
+    if out is _UNRECOGNIZED:
+        return out
+    if out is structured:
+        content = payload.get("content")
+        rendered = structured["result"] if isinstance(structured, dict) and set(structured) == {"result"} else structured
+        if not is_content_blocks(content) or all(_renders(b, rendered) for b in content if "text" in b):
+            return payload   # the text is structuredContent rendered: nothing more in it
+        blocks = _transform_block_list(content, fn, render, unread)
+        return payload if blocks is _UNRECOGNIZED or blocks is content else {**payload, "content": blocks}
     # A ``{"result": ...}`` wrapper's text block renders the wrapped value, not the wrapper. A
     # string is already the text (a tool that returns JSON text): encoding it again would make
     # it a JSON string literal.
     rendered = out["result"] if isinstance(out, dict) and set(out) == {"result"} else out
     text = rendered if isinstance(rendered, str) else json.dumps(rendered)
     return {**payload, "structuredContent": out, "content": [render(text)]}
+
+
+def _renders(block: dict, value: Any) -> bool:
+    try:
+        return block["text"] == value or json.loads(block["text"]) == value
+    except (ValueError, TypeError):
+        return False
 
 
 def _is_content_block(block: Any) -> bool:

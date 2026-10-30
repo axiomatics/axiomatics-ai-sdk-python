@@ -43,6 +43,7 @@ from cachetools import TTLCache
 from axiomatics_ai._extras import requires_extra
 
 from axiomatics_ai.core.cache import credential_expires_at
+from axiomatics_ai.core.client_metadata import ClientIdMetadata
 from axiomatics_ai.core.config import DefaultServerContextProvider
 from axiomatics_ai.core.pdp.attributes import is_sendable
 
@@ -341,7 +342,7 @@ class RarMapping:
         entries = [
             e for e in claims.get("authorization_details") or []
             if isinstance(e, dict) and e.get("type") == self.type
-            and (location in e["locations"] if e.get("locations") else single_audience)
+            and (isinstance(e["locations"], list) and location in e["locations"] if e.get("locations") else single_audience)
             and (self.action is None or self.action in (e.get("actions") or []))
         ]
         subject[f"{self.prefix}available"] = len(entries) == 1
@@ -448,6 +449,9 @@ class AgentIdentityContextProvider(DefaultServerContextProvider):
             are sent as.
         extra_subject (Callable[[dict], dict[str, Any]], optional): Adds derived subject
             attributes from the claims.
+        client_metadata (ClientIdMetadata, optional): For a ``client_id`` that is a Client ID
+            Metadata Document URL (CIMD), send the client's host and, optionally, fields of its
+            document.
 
     Raises:
         ValueError: Not exactly one of ``verification`` and ``claims_from``; ``token_from``
@@ -465,6 +469,7 @@ class AgentIdentityContextProvider(DefaultServerContextProvider):
         rar: RarMapping | None = None,
         attributes: AgentIdentityAttributes | None = None,
         extra_subject: Callable[[dict], dict[str, Any]] | None = None,
+        client_metadata: ClientIdMetadata | None = None,
     ) -> None:
         if (verification is None) == (claims_from is None):
             raise ValueError(
@@ -482,6 +487,7 @@ class AgentIdentityContextProvider(DefaultServerContextProvider):
         self.rar = rar
         self.attributes = attributes or AgentIdentityAttributes()
         self.extra_subject = extra_subject
+        self.client_metadata = client_metadata
         self._keys = _KeySource(verification) if verification is not None else None
         self._verified: TTLCache = TTLCache(maxsize=1024, ttl=300)
         self._rejected: TTLCache = TTLCache(maxsize=1024, ttl=_REJECTED_TOKEN_SECONDS)
@@ -504,7 +510,7 @@ class AgentIdentityContextProvider(DefaultServerContextProvider):
         return type(self)(
             self.verification.with_audience(audience), token_from=self.token_from,
             claims=dict(self.claims), rar=self.rar, attributes=self.attributes,
-            extra_subject=self.extra_subject,
+            extra_subject=self.extra_subject, client_metadata=self.client_metadata,
         )
 
     # ── ContextProvider ───────────────────────────────────────────────────────
@@ -602,6 +608,8 @@ class AgentIdentityContextProvider(DefaultServerContextProvider):
         put(subject, names.amr, claims.get("amr"))
         put(subject, names.auth_time, claims.get("auth_time"))
         put(environment, names.transaction_id, claims.get("txn"))
+        if self.client_metadata is not None:
+            subject.update(self.client_metadata.attributes(claims.get("client_id")))
         _map_claims(claims, self.claims, subject, dropped)
         if self.rar is not None:
             location = self.verification.audiences[0] if self.verification is not None else ""

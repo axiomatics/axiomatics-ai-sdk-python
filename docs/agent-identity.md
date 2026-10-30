@@ -265,6 +265,45 @@ policy initiatePayment {
 Not covered: RAR delivered through token introspection (opaque tokens, RFC 9396 §9.2), and
 building RAR objects for a CIBA or other human-approval request. The SDK does not request tokens.
 
+## Client ID Metadata Documents (CIMD)
+
+With CIMD (an IETF OAuth draft, recommended for client registration by MCP) a client's
+`client_id` is an HTTPS URL, such as `https://vscode.dev/oauth/client-metadata.json`, and the
+JSON document at that URL describes the client. The authorization server fetches it when it
+issues the token. `ClientIdMetadata` gives the policy something to decide on beyond the URL:
+
+```python
+from axiomatics_ai import AgentIdentityContextProvider, ClientIdMetadata
+
+provider = AgentIdentityContextProvider(
+    verification,
+    client_metadata=ClientIdMetadata(fetch=True, allowed_hosts=("*.example.com", "vscode.dev")),
+)
+```
+
+| Subject attribute | From | Needs |
+|---|---|---|
+| `client_host` | the `client_id` URL's host, e.g. `vscode.dev` | nothing: no network |
+| `client_name` | the document's `client_name`, e.g. `Visual Studio Code` | `fetch=True` |
+| `client_auth_method` | the document's `token_endpoint_auth_method`, e.g. `none` for a public client | `fetch=True` |
+
+`fields=` maps other document fields; `host_attribute=None` drops `client_host`. A `client_id`
+that isn't a CIMD URL (`https`, a path, no fragment, credentials or dot segments) gets no
+attributes.
+
+The fetch is opt-in and follows the draft's security rules. The host must resolve only to public
+addresses (never loopback, private, link-local or cloud metadata ones), and the request goes to
+the address that was checked, with TLS verified for the host name. No redirects, no proxy, no
+compression, at most 5 KB, and the document's own `client_id` must equal the URL. A request
+never waits longer than `timeout` (2 s) for a fetch, and at most four run at once. A document is
+reused for `cache_seconds` (300); one that can't be fetched or doesn't match adds none of its
+fields, is logged, and is retried after a minute. `allowed_hosts` limits fetching to hosts you
+expect.
+
+The host is the strong attribute: the authorization server checked the client against that URL.
+The document's fields are what the client says about itself, so a rule should rest on
+`client_host` and treat `client_name` as descriptive.
+
 ## Values the PDP cannot carry
 
 A PDP attribute holds one scalar or a list of scalars of one type. Every request builder drops,
@@ -360,19 +399,51 @@ still verifies until it expires, so for the next decision to be a Deny the PDP h
 the revocation, for example through an attribute it looks up. The cache is per process: every
 replica has to receive the signal.
 
-Receiving the signal is out of scope. The SDK has no Shared Signals (SSF/CAEP) receiver. A
-revocation webhook of your own would call it like this:
+### Receiving Shared Signals (SSF / CAEP)
+
+Identity providers announce these changes with the OpenID Shared Signals Framework: when a
+session is revoked, credentials change, risk rises or an account is disabled, the provider (the
+transmitter) pushes a signed Security Event Token (SET, RFC 8417) to an HTTPS endpoint you
+registered with it. `SsfReceiver` is that endpoint: it verifies the SET and calls
+`invalidate_decisions()` for its subject. It needs the `jwt` extra.
 
 ```python
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.routing import Route
+from axiomatics_ai import SsfReceiver
 
-async def on_revocation(request: Request) -> Response:
-    # Authenticate the sender (signature, mTLS, shared secret) before acting on it.
-    event = await request.json()
-    config.invalidate_decisions(reason=event["reason"], user_id=event["user_id"])
-    return Response(status_code=202)
+receiver = SsfReceiver(
+    config,
+    issuer="https://idp.example.com",                   # the transmitter
+    audience="https://mcp.example.com/ssf/events",      # this receiver, as registered there
+    authorization="Bearer <stream secret>",             # what the transmitter sends with each push
+)
+routes = [..., Route("/ssf/events", receiver)]         # the exact registered path; or receiver.handle(token)
 ```
+
+- **Setup at the provider.** Create a push stream once, in the provider's console or SSF API:
+  this endpoint's URL as the delivery endpoint, the `authorization` value as its authorization
+  header, and the subjects and event types to send. The receiver doesn't manage streams.
+- **Verification.** The signature against the transmitter's keys (`jwks_url`, or the
+  `jwks_uri` in its `/.well-known/ssf-configuration`), `iss`, `aud`, `iat` (60 s of clock skew
+  allowed), a `jti`, `typ: secevent+jwt`, and the `Authorization` header. After the keys can't
+  be fetched, they aren't fetched again for 30 s. A refused SET gets HTTP 400 (401 for the
+  header) with an RFC 8935 error code; an accepted one gets 202.
+- **What it drops.** Every event about a subject drops that subject's cached decisions, whatever
+  its type: the next call asks the PDP, which decides on the new state. The subject identifier
+  (RFC 9493) is matched by `subject_attributes`: by default `iss_sub` and `opaque` to `user_id`
+  (the `iss` of `iss_sub` isn't compared). Map `email` only if your context provider sends the
+  user's email as a subject attribute, exactly as the transmitter writes it. An `aliases`
+  subject drops the decisions of every identifier that matches; a subject it can't match drops
+  every cached decision. Verification and
+  stream events are only acknowledged. Each invalidation is an `InvalidationEvent`, so
+  `AuditLogHook` records it as a remediation with the event type and the SET's `jti`.
+- **Beyond the cache.** `on_event(event_type, subject, claims)` is called for each event, for
+  example to end the user's sessions in your app.
+- **Several replicas.** The transmitter pushes to one URL, and each process has its own cache:
+  behind a load balancer, forward each SET to every replica (or call `invalidate_decisions()` on
+  each from a shared channel).
+- **Not covered.** Poll delivery (RFC 8936), stream management, and replay detection: a replayed
+  SET only drops decisions again, which costs PDP calls but grants nothing.
 
 ## Audit trail
 
@@ -384,10 +455,10 @@ invalidation, with those fields:
 ```python
 from axiomatics_ai import AuditLogHook
 
-config = AuthZConfig(..., hooks=[AuditLogHook(hash_chain=True)])
+config = AuthZConfig(..., hooks=[AuditLogHook(hash_chain=True, signing_key=private_key)])
 ```
 
-Record fields, sinks and the hash chain are on [Hooks](hooks.md#audit-trail-auditloghook).
+Record fields, sinks, the hash chain, signing and verification are on [Hooks](hooks.md#audit-trail-auditloghook).
 Durability belongs to the sink and the SIEM behind it, not to the SDK.
 
 ## Gateway: no token passthrough
@@ -418,8 +489,9 @@ never put them in the prompt, a tool argument, or state the model can read.
 | Decide on the current actor only | RFC 8693 §4.1 | `actor_id` from the outermost `act`; prior actors logged |
 | One stable identifier per agent | AIMS §6 | `agent_id` from the token, or from the runtime context on client paths |
 | Enforce approved authorization details | RFC 9396 §9 | `RarMapping`; exactly one entry, never merged |
-| No cached decision after revocation or expiry | AIMS §11 | cache capped at `exp`; `invalidate_decisions()` |
-| Durable, tamper-evident audit | AIMS §11 | `AuditLogHook` with `hash_chain=True`; durability in your sink |
+| No cached decision after revocation or expiry | AIMS §11 | cache capped at `exp`; `invalidate_decisions()`, called by `SsfReceiver` on Shared Signals |
+| Durable, tamper-evident audit | AIMS §11 | `AuditLogHook` with `hash_chain=True` and a `signing_key`, checked with `verify_audit_trail()`; durability in your sink |
+| Client metadata as attributes | CIMD draft, AIMS §10.10 | `ClientIdMetadata`: `client_host`, and document fields with `fetch=True` |
 | Correlation id across services | AIMS §11 | `transaction_id` from `txn`, plus the SDK's `correlation_id` |
 | Don't pass tokens on | AIMS §10.8, MCP | gateway strips `Authorization` unless `forward_authorization=True` |
 | Credentials out of the model's reach | AIMS §8 | tokens read from headers only, never logged |
@@ -432,13 +504,14 @@ These belong to other components of an AIMS deployment:
   your identity provider issues and exchanges them.
 - **Human approval** such as CIBA (AIMS §10.7). The SDK does not obtain an approval or a token for
   one.
-- **Shared Signals transport** (SSF, CAEP, RISC). `invalidate_decisions()` is what a receiver calls;
-  the receiver is yours.
+- **Shared Signals beyond push** (SSF, CAEP, RISC). `SsfReceiver` takes pushed events; poll
+  delivery and stream management are the provider's console or your own code.
 - **WIMSE proof tokens and mTLS** (AIMS §9). Proof of possession is checked, if at all, before the
   request reaches the SDK.
 - **Transaction-token issuance** (AIMS §10.5). The SDK reads `txn`; it does not mint transaction
   tokens.
-- **Signed decision receipts.** Decisions are logged, with an optional hash chain, but not signed.
+- **Signed decisions from the PDP.** Audit records are signed by the SDK, which attests what it
+  enforced. A receipt signed by the PDP itself, covering the policy version, is the PDP's to issue.
 - **Token introspection** for opaque tokens. Only JWT access tokens are verified.
 
 ---

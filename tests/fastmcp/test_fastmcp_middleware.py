@@ -622,6 +622,31 @@ def test_custom_tool_name_attribute_reaches_every_tool_point(monkeypatch):
     assert post_resources == [{"tid": "list_documents"}]
 
 
+@pytest.mark.parametrize("amount", ["5000", 5000.0, True])
+def test_argument_of_another_type_than_the_schema_is_refused_before_the_pdp(monkeypatch, amount):
+    """The PDP would see "5000" (string) while the tool runs on 5000 (integer) after coercion."""
+    asked = []
+    monkeypatch.setattr(enforcement_module, "get_permitted_tools", lambda _ads, *, tool_names, **kw: set(tool_names))
+    monkeypatch.setattr(enforcement_module, "evaluate_tool_call", decision_seam(lambda *a, **kw: asked.append(1) or True))
+    monkeypatch.setattr(fmw_module, "get_http_headers", lambda **kw: _auth_header(ALICE_CLAIMS))
+    mcp = FastMCP("bank")
+
+    @mcp.tool
+    def transfer(amount: int, note: str | None = None) -> str:
+        return f"sent {amount}"
+
+    mcp.add_middleware(FastMCPAuthZMiddleware(AuthZConfig(enforcement=standard_tool_enforcement())))
+
+    async def run(args):
+        async with Client(mcp) as client:
+            return await client.call_tool("transfer", args)
+
+    with pytest.raises(ToolError, match="does not match its schema"):
+        _run(run({"amount": amount}))
+    assert asked == []
+    assert _run(run({"amount": 5000, "note": None})).data == "sent 5000"
+
+
 # ── Post-invocation ───────────────────────────────────────────────────────────
 
 def test_post_invocation_keeps_only_permitted_records(monkeypatch):

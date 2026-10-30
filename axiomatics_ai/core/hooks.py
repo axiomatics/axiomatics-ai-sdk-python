@@ -31,14 +31,17 @@ import functools
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from inspect import iscoroutinefunction
 from typing import Any
+
+from axiomatics_ai._extras import requires_extra
 
 logger = logging.getLogger(__name__)
 
@@ -310,15 +313,23 @@ class AuditLogHook(AuthzHook):
 
     Each record has the fields AIMS §11 asks for: agent, delegated user, current actor, tool or
     resource, action, decision, cached flag, timestamp, correlation id, and the environment
-    attributes (transaction id, risk or posture, intent). Durability and tamper evidence belong
-    to the sink.
+    attributes (transaction id, risk or posture, intent). Durability belongs to the sink.
+
+    With ``hash_chain`` each record carries ``chain_id``, ``seq``, ``previous_hash`` and
+    ``hash``, so an edited, removed or reordered record is detectable with
+    :func:`verify_audit_trail`. With a ``signing_key`` each record is also signed, so whoever can
+    rewrite the stored trail still can't recompute it.
 
     Args:
         sink (logging.Logger | Callable[[dict], None], optional): Receives each record: a
             logger (default ``axiomatics_ai.audit``; the record is one JSON line) or a callable
             taking the record dict.
-        hash_chain (bool): Add each record's hash and the previous record's, so a gap or edit
-            in the stored trail is detectable.
+        hash_chain (bool): Chain the records (see above).
+        signing_key (Any, optional): A private key (PEM or a ``cryptography`` key object) that
+            signs each chained record. Needs the ``jwt`` extra.
+        signing_algorithm (str): The JWS algorithm: ``ES256`` (ECDSA P-256, the default),
+            ``EdDSA`` (Ed25519), ``PS256`` or the other asymmetric ones.
+        signing_key_id (str, optional): The ``kid`` put in each signature's header.
         agent_attribute (str): The subject attribute lifted to the record's ``agent``.
         user_attribute (str): The subject attribute lifted to the record's ``user``.
         actor_attribute (str): The subject attribute lifted to the record's ``actor``.
@@ -332,6 +343,9 @@ class AuditLogHook(AuthzHook):
         sink: logging.Logger | Callable[[dict], None] | None = None,
         *,
         hash_chain: bool = False,
+        signing_key: Any = None,
+        signing_algorithm: str = "ES256",
+        signing_key_id: str | None = None,
         agent_attribute: str = "agent_id",
         user_attribute: str = "user_id",
         actor_attribute: str = "actor_id",
@@ -343,7 +357,14 @@ class AuditLogHook(AuthzHook):
             "agent_id": agent_attribute, "user_id": user_attribute, "actor_id": actor_attribute,
             "agent_name": agent_name_attribute,
         }
-        self._previous_hash = ""
+        if signing_key is not None and not hash_chain:
+            raise ValueError("AuditLogHook signs chained records only: set hash_chain=True")
+        if signing_algorithm not in _SIGNING_ALGORITHMS:
+            raise ValueError(f"signing_algorithm must be one of {sorted(_SIGNING_ALGORITHMS)}")
+        self._signing = (signing_key, signing_algorithm, {"kid": signing_key_id} if signing_key_id else None)
+        if signing_key is not None:
+            self._sign({"probe": True})  # a wrong key or algorithm fails here, not on the first decision
+        self._pid = -1   # the chain starts on the first record, in the process that writes it
         self._lock = threading.Lock()
 
     def on_decision(self, event: DecisionEvent) -> None:
@@ -388,15 +409,121 @@ class AuditLogHook(AuthzHook):
     def _emit(self, record: dict) -> None:
         with self._lock:
             if self._hash_chain:
-                record["previous_hash"] = self._previous_hash
-                record["hash"] = hashlib.sha256(
-                    json.dumps(record, sort_keys=True, default=str).encode()
-                ).hexdigest()
-                self._previous_hash = record["hash"]
+                # The record as it will be stored (JSON values only), so the hash is recomputable.
+                record = json.loads(json.dumps(record, default=str))
+                if self._pid != os.getpid():   # first record, or a forked worker: a chain of its own
+                    self._pid, self._chain_id, self._seq, self._previous_hash = os.getpid(), str(uuid.uuid4()), 0, ""
+                seq = self._seq + 1
+                record.update(chain_id=self._chain_id, seq=seq, previous_hash=self._previous_hash)
+                record["hash"] = _record_hash(record)
+                if self._signing[0] is not None:
+                    record["signature"] = self._sign({"chain_id": self._chain_id, "seq": seq, "hash": record["hash"]})
+                self._seq, self._previous_hash = seq, record["hash"]
             if isinstance(self._sink, logging.Logger):
                 self._sink.info(json.dumps(record, default=str))
             else:
                 self._sink(record)
+
+
+    def _sign(self, payload: dict) -> str:
+        with requires_extra("jwt", "Signing audit records"):
+            import jwt
+
+        key, algorithm, headers = self._signing
+        return jwt.encode(payload, key, algorithm=algorithm, headers=headers)
+
+
+_SIGNING_ALGORITHMS = frozenset({"ES256", "ES384", "ES512", "EdDSA", "PS256", "PS384", "PS512", "RS256"})
+
+
+def _record_hash(record: dict) -> str:
+    """SHA-256 over the record without ``hash`` and ``signature``: JSON, sorted keys, no spaces, ASCII."""
+    body = {k: v for k, v in record.items() if k not in ("hash", "signature")}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate key")   # parsers disagree on which value wins
+    return dict(pairs)
+
+
+def verify_audit_trail(records: Iterable[dict | str], public_key: Any = None) -> list[str]:
+    """Check a stored ``AuditLogHook`` trail written with ``hash_chain=True``.
+
+    Records of several chains (one per process or worker) may be interleaved. Per chain, the
+    ``seq`` numbers must run 1, 2, 3…, each ``previous_hash`` must be the hash of the record
+    before, and each ``hash`` must match the record's content. With ``public_key``, every
+    record's ``signature`` must verify and name the same chain, ``seq`` and hash. Records cut off
+    the end of a chain, or a whole chain removed, can't be detected from the trail alone: keep
+    each chain's id and latest hash elsewhere.
+
+    Args:
+        records (Iterable[dict | str]): The records, in the order they were written: the stored
+            JSON lines (preferred: a line with a duplicate key is refused, since other parsers
+            may read another value) or parsed dicts.
+        public_key (Any, optional): The public key matching the hook's ``signing_key``.
+
+    Returns:
+        list[str]: What is wrong, one line per problem; empty when the trail is intact.
+    """
+    problems: list[str] = []
+    last: dict[str, tuple[int, str]] = {}   # chain_id -> (seq, hash) of its latest record
+    for index, line in enumerate(records):
+        record = _parsed_record(line, index, problems)
+        if record is None:
+            continue
+        chain, seq, claimed = record.get("chain_id"), record.get("seq"), record.get("hash")
+        where = f"record {index} (chain {chain}, seq {seq})"
+        if not isinstance(chain, str) or not isinstance(seq, int) or not isinstance(claimed, str):
+            problems.append(f"{where}: not a chained record")
+            continue
+        problems.extend(f"{where}: {p}" for p in _chain_problems(record, last.get(chain, (0, "")), public_key))
+        last[chain] = (seq, claimed)
+    return problems
+
+
+def _chain_problems(record: dict, previous: tuple[int, str], public_key: Any) -> list[str]:
+    """What is wrong with one chained record, given its chain's previous (seq, hash)."""
+    problems = []
+    if record["seq"] != previous[0] + 1:
+        problems.append(f"expected seq {previous[0] + 1}; records are missing or out of order")
+    if record.get("previous_hash") != previous[1]:
+        problems.append("previous_hash is not the hash of the record before")
+    if _record_hash(record) != record["hash"]:
+        problems.append("content does not match its hash")
+    if public_key is not None:
+        problems.extend(_signature_problems(record, public_key))
+    return problems
+
+
+def _parsed_record(line: dict | str, index: int, problems: list[str]) -> dict | None:
+    """The record as a dict, or None (with the problem noted) when it isn't one."""
+    if isinstance(line, str):
+        try:
+            line = json.loads(line, object_pairs_hook=_no_duplicate_keys)
+        except ValueError as exc:
+            problems.append(f"record {index}: not a valid JSON record ({exc})")
+            return None
+    if not isinstance(line, dict):
+        problems.append(f"record {index}: not a JSON object")
+        return None
+    return line
+
+
+def _signature_problems(record: dict, public_key: Any) -> list[str]:
+    with requires_extra("jwt", "Verifying audit records"):
+        import jwt
+
+    try:
+        signed = jwt.decode(record.get("signature") or "", public_key, algorithms=sorted(_SIGNING_ALGORITHMS))
+    except jwt.PyJWTError as exc:
+        return [f"signature does not verify ({exc})"]
+    if signed != {"chain_id": record["chain_id"], "seq": record["seq"], "hash": record["hash"]}:
+        return ["signature is for another record"]
+    return []
 
 
 def _iso(timestamp: float) -> str:

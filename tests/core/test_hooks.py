@@ -31,6 +31,7 @@ from axiomatics_ai.core.hooks import (
     HookDispatcher,
     InvalidationEvent,
     LoggingHook,
+    verify_audit_trail,
 )
 from axiomatics_ai.core.post_invocation import PostInvocationContext
 from axiomatics_ai import PDPConnection, standard_tool_enforcement
@@ -377,8 +378,19 @@ def _decision_event(**kw) -> DecisionEvent:
 
 
 def _recompute(record: dict) -> str:
-    body = {k: v for k, v in record.items() if k != "hash"}
-    return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
+    """The documented hash: SHA-256 over the record minus hash/signature, sorted keys, no spaces."""
+    body = {k: v for k, v in record.items() if k not in ("hash", "signature")}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _chained_trail(**hook_kwargs) -> list[dict]:
+    records: list[dict] = []
+    hook = AuditLogHook(records.append, hash_chain=True, **hook_kwargs)
+    hook.on_decision(_decision_event())
+    hook.on_invalidation(InvalidationEvent(subject={}, removed=1, timestamp=1.0))
+    hook.on_decision(_decision_event(decision="deny", timestamp=2.0))
+    return [json.loads(json.dumps(r)) for r in records]   # as stored and read back
 
 
 class TestAuditLogHook:
@@ -432,21 +444,89 @@ class TestAuditLogHook:
         assert events == ["decision"]
 
     def test_hash_chain_is_recomputable(self):
-        records = []
-        hook = AuditLogHook(records.append, hash_chain=True)
-        hook.on_decision(_decision_event())
-        hook.on_invalidation(InvalidationEvent(subject={}, removed=1, timestamp=1.0))
-        hook.on_decision(_decision_event(decision="deny", timestamp=2.0))
-
+        records = _chained_trail()
+        assert [r["seq"] for r in records] == [1, 2, 3]
+        assert len({r["chain_id"] for r in records}) == 1
         previous = ""
         for record in records:
             assert record["previous_hash"] == previous
             assert record["hash"] == _recompute(record)
             previous = record["hash"]
+        assert verify_audit_trail(records) == []
 
-        tampered = {**records[1], "removed": 99}
-        assert _recompute(tampered) != records[1]["hash"]          # an edit is detectable
-        assert records[2]["previous_hash"] != records[0]["hash"]  # a dropped record breaks the chain
+    def test_verify_detects_edit_removal_and_reorder(self):
+        records = _chained_trail()
+        edited = [records[0], {**records[1], "removed": 99}, records[2]]
+        assert any("content does not match" in p for p in verify_audit_trail(edited))
+        removed = verify_audit_trail([records[0], records[2]])
+        assert any("expected seq 2" in p for p in removed)
+        assert any("previous_hash" in p for p in removed)
+        assert verify_audit_trail(records[1:])                     # the start is missing
+        assert verify_audit_trail([records[1], records[0], records[2]])
+        assert verify_audit_trail([{"event": "decision"}]) == ["record 0 (chain None, seq None): not a chained record"]
+
+    def test_verify_accepts_interleaved_chains(self):
+        first, second = _chained_trail(), _chained_trail()        # e.g. two workers
+        assert first[0]["chain_id"] != second[0]["chain_id"]
+        interleaved = [first[0], second[0], first[1], second[1], second[2], first[2]]
+        assert verify_audit_trail(interleaved) == []
+
+    @pytest.mark.parametrize("algorithm", ["ES256", "EdDSA"])
+    def test_signed_records_verify_with_the_public_key(self, algorithm):
+        from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+
+        private = ec.generate_private_key(ec.SECP256R1()) if algorithm == "ES256" else ed25519.Ed25519PrivateKey.generate()
+        records = _chained_trail(signing_key=private, signing_algorithm=algorithm, signing_key_id="audit-1")
+        assert all(r["signature"] for r in records)
+        assert verify_audit_trail(records, public_key=private.public_key()) == []
+
+        # Rewriting a record and recomputing the chain is caught by the signatures.
+        forged = [dict(r) for r in records]
+        forged[1]["removed"] = 99
+        forged[1]["hash"] = _recompute(forged[1])
+        problems = verify_audit_trail(forged, public_key=private.public_key())
+        assert any("signature is for another record" in p for p in problems)
+
+        other = ec.generate_private_key(ec.SECP256R1()) if algorithm == "ES256" else ed25519.Ed25519PrivateKey.generate()
+        assert all("signature does not verify" in p for p in verify_audit_trail(records, public_key=other.public_key()))
+
+    def test_signing_needs_chain_and_an_asymmetric_algorithm(self):
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        key = ec.generate_private_key(ec.SECP256R1())
+        with pytest.raises(ValueError, match="hash_chain=True"):
+            AuditLogHook(lambda r: None, signing_key=key)
+        with pytest.raises(ValueError, match="signing_algorithm"):
+            AuditLogHook(lambda r: None, hash_chain=True, signing_key=b"secret", signing_algorithm="HS256")
+
+    def test_lone_surrogate_is_recorded_not_lost(self):
+        records = []
+        hook = AuditLogHook(records.append, hash_chain=True)
+        for tool in ("a", "\ud800", "b"):
+            hook.on_decision(_decision_event(resource={"tool_name": tool}))
+        assert [r["seq"] for r in records] == [1, 2, 3] and verify_audit_trail(records) == []
+
+    def test_forked_worker_starts_its_own_chain(self, monkeypatch):
+        records = []
+        hook = AuditLogHook(records.append, hash_chain=True)
+        hook.on_decision(_decision_event())
+        monkeypatch.setattr("axiomatics_ai.core.hooks.os.getpid", lambda: -42)   # as after os.fork()
+        hook.on_decision(_decision_event())
+        assert records[1]["chain_id"] != records[0]["chain_id"] and records[1]["seq"] == 1
+        assert verify_audit_trail(records) == []
+
+    def test_verify_takes_json_lines_and_refuses_duplicate_keys(self):
+        lines = [json.dumps(r) for r in _chained_trail()]
+        assert verify_audit_trail(lines) == []
+        forged = '{"decision": "Permit", ' + lines[0][1:]
+        assert verify_audit_trail([forged, *lines[1:]])[0].startswith("record 0: not a valid JSON record")
+        assert verify_audit_trail(["null", "[]"]) == ["record 0: not a JSON object", "record 1: not a JSON object"]
+
+    def test_chained_record_values_are_json(self):
+        records = []
+        AuditLogHook(records.append, hash_chain=True).on_decision(_decision_event(detail={"when": object()}))
+        assert isinstance(records[0]["detail"]["when"], str)
+        assert verify_audit_trail(records) == []
 
     def test_wired_through_config_and_enforcement(self):
         records = []

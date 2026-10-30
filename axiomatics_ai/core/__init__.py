@@ -61,7 +61,10 @@ from axiomatics_ai.core.hooks import (
     HookDispatcher,
     InvalidationEvent,
     LoggingHook,
+    verify_audit_trail,
 )
+from axiomatics_ai.core.shared_signals import SignalRejected, SsfReceiver
+from axiomatics_ai.core.client_metadata import ClientIdMetadata
 from axiomatics_ai.core.identity import (
     AgentIdentityAttributes,
     AgentIdentityContextProvider,
@@ -86,6 +89,7 @@ __all__ = [
     "AuthzDecisionCacheWithTTL",
     "AuthzHook",
     "Claim",
+    "ClientIdMetadata",
     "ColumnMaskStrategy",
     "ContextProvider",
     "Decision",
@@ -120,6 +124,8 @@ __all__ = [
     "RarMapping",
     "RecordFilterStrategy",
     "RetrievalConfig",
+    "SignalRejected",
+    "SsfReceiver",
     "TokenVerificationError",
     "decode_bearer_jwt_unverified",
     "intent_enricher",
@@ -128,4 +134,5 @@ __all__ = [
     "standard_tool_enforcement",
     "toxicity_enricher",
     "verify_access_token",
+    "verify_audit_trail",
 ]

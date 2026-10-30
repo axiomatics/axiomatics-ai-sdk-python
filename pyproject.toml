@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "axiomatics-ai-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Externalized ABAC for AI applications: enforce PDP policies (XACML 3.0 JSON or OpenID AuthZEN) across agents, tools, MCP servers, A2A agents, and RAG"
 # The PyPI page is README.md with its relative links made absolute: see
 # [tool.hatch.metadata.hooks.fancy-pypi-readme] below.
@@ -70,11 +70,11 @@ rag = [
     "langchain-community",
 ]
 fastmcp = [
-    "fastmcp>=3.2.4,<4",
+    "fastmcp>=3.4.10,<4",
     "pyjwt[crypto]>=2.15.1",
 ]
 tool-decorator = [
-    "fastmcp>=3.2.4,<4",
+    "fastmcp>=3.4.10,<4",
     "pyjwt[crypto]>=2.15.1",
 ]
 # A2A wire enforcement (A2AClientAuthZ / A2AAuthZMiddleware) imports no a2a-sdk at runtime —
@@ -88,7 +88,7 @@ a2a = [
 # the MCP proxy routes, pyjwt for JWT identity. A2A routes reuse the pure-ASGI middleware
 # (no a2a-sdk at runtime). httpx comes from the core deps.
 gateway = [
-    "fastmcp>=3.2.4,<4",
+    "fastmcp>=3.4.10,<4",
     "pyjwt[crypto]>=2.15.1",
     "starlette>=0.37.0",
 ]

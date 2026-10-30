@@ -184,6 +184,9 @@ AuthZConfig(
 - `FastMCPAuthZMiddleware(config)` takes the context provider from `config.context_provider`,
   falling back to `DefaultServerContextProvider()`.
 - Transport must be `http` or `sse`. stdio is not supported.
+- With `BEFORE_TOOL`, a call whose argument has a JSON type the tool's input schema doesn't allow
+  (`"5000"` or `5000.0` for an `int`) is refused before the PDP is asked: the tool would run on
+  the converted value, while the PDP decided on the one sent.
 - To set the internal `surface` label used to tag decision events (default `"fastmcp"`), use
   `FastMCPAuthZMiddleware` directly rather than the wrapper.
 

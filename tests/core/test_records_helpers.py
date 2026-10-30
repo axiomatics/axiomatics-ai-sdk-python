@@ -98,6 +98,15 @@ def test_mcp_result_with_an_object_as_structured_content():
     assert json.loads(out["content"][0]["text"]) == out["structuredContent"]
 
 
+def test_mcp_text_holding_more_than_structured_content_is_filtered_too():
+    """structuredContent is only a summary; the records the model reads are in the text."""
+    payload = {"structuredContent": {"count": 2}, "content": [{"type": "text", "text": json.dumps(RECORDS)}]}
+    keep_public = lambda v: [r for r in v if r.get("kind") == "public"] if isinstance(v, list) else v
+    out, found = transform_tool_output(payload, keep_public)
+    assert found and out["structuredContent"] == {"count": 2}
+    assert json.loads(out["content"][0]["text"]) == KEPT
+
+
 def test_custom_text_block_renderer_is_used():
     # Strands uses {"text": ...} where MCP uses {"type": "text", "text": ...}.
     payload = {"structuredContent": {"result": RECORDS}, "content": []}

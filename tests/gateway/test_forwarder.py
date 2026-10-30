@@ -171,6 +171,7 @@ def _forwarder_counting_calls():
 
 @pytest.mark.parametrize("path", [
     "/../admin", "/a/../../admin", "/a/./b", "/.", "/..", "/a/..", "/a\\..\\b", "\\..\\admin", "/a/.\\b",
+    "/v1/tasks/1?/.well-known/agent-card.json", "/v1/tasks/1#/.well-known/agent-card.json",   # decoded %3F, %23
 ])
 def test_dot_segment_is_rejected_and_not_forwarded(path):
     # scope["path"] is percent-decoded by the server, so "%2e%2e" arrives here as "..".

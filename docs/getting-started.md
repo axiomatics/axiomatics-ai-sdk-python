@@ -5,19 +5,16 @@ list and tool calls are decided by policy rather than by code.
 
 ## 1. Install
 
-The package is not yet on PyPI. Install from the repository or a local clone, adding the
-extra for the integration you use:
+Install the package from PyPI (Python 3.11 or later), adding the extra for the integration you
+use. It is imported as `axiomatics_ai`.
 
 ```bash
-# from a local clone
-uv add /path/to/axiomatics-ai-sdk-python --extra langchain-agents
-pip install "/path/to/axiomatics-ai-sdk-python[langchain-agents]"
-
-# from the repository
-uv add git+https://github.com/axiomatics/axiomatics-ai-sdk-python.git --extra langchain-agents
+pip install "axiomatics-ai-sdk[langchain-agents]"
+# or
+uv add "axiomatics-ai-sdk[langchain-agents]"
 ```
 
-Combine the extras for the integrations you use (`--extra a --extra b`, or `[a,b]`):
+Combine the extras for the integrations you use (`[a,b]`):
 
 | Extra | Install when using |
 |---|---|

@@ -76,6 +76,42 @@ logger = logging.getLogger(__name__)
 _APPROVE, _REJECT = "approve", "reject"
 
 
+_JSON_TYPES: dict[str, type | tuple[type, ...]] = {
+    "string": str, "integer": int, "number": (int, float), "boolean": bool,
+    "array": list, "object": dict, "null": type(None),
+}
+
+
+async def _schema_mismatches(fastmcp_context: Any, tool_name: str, arguments: dict) -> list[str]:
+    """The arguments whose JSON type the tool's input schema doesn't allow.
+
+    The PDP decides on the arguments as sent, but the tool runs on pydantic-coerced ones
+    (``"5000"`` and ``5000.0`` both become ``5000``), so a rule on one type would miss the other.
+    Such a call is refused before the PDP is asked.
+    """
+    server = getattr(fastmcp_context, "fastmcp", None)
+    tool = await server.get_tool(tool_name) if server is not None else None
+    properties = (getattr(tool, "parameters", None) or {}).get("properties") or {}
+    return [name for name, value in arguments.items() if name in properties and not _type_allowed(value, properties[name])]
+
+
+def _type_allowed(value: Any, schema: dict) -> bool:
+    for option in schema.get("anyOf") or schema.get("oneOf") or [schema]:
+        types = option.get("type") if isinstance(option, dict) else None
+        if types is None:
+            return True   # untyped or a $ref: not checked here
+        if any(_is_json_type(value, name) for name in ([types] if isinstance(types, str) else types)):
+            return True
+    return False
+
+
+def _is_json_type(value: Any, name: str) -> bool:
+    expected = _JSON_TYPES.get(name)
+    if expected is None:
+        return True   # a type this check doesn't know
+    return isinstance(value, expected) and not (isinstance(value, bool) and name in ("integer", "number"))
+
+
 async def _ask_by_elicitation(fastmcp_context: Any, request: ApprovalRequest) -> ApprovalDecision:
     """Ask the MCP client's user to approve the call with an elicitation (approve or reject).
 
@@ -348,6 +384,9 @@ class FastMCPAuthZMiddleware(Middleware):
 
         invocation_enforcer = self.config.enforcer(EnforcementPoint.BEFORE_TOOL)
         if invocation_enforcer is not None:
+            mismatched = await _schema_mismatches(getattr(context, "fastmcp_context", None), tool_name, arguments)
+            if mismatched:
+                raise ToolError(f"Access denied: argument {mismatched[0]!r} of {tool_name!r} does not match its schema.")
             action = self._provider.get_action(invocation_enforcer.action_name, headers)
             resource = self._provider.get_resource(
                 tool_name, headers, args=arguments,

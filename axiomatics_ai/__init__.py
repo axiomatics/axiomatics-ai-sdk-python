@@ -11,6 +11,7 @@ from axiomatics_ai.core import (
     AgentIdentityContextProvider,
     AuditLogHook,
     Claim,
+    ClientIdMetadata,
     InvalidationEvent,
     JwtVerification,
     RarMapping,
@@ -55,6 +56,8 @@ from axiomatics_ai.core import (
     pii_enricher,
     intent_enricher,
     toxicity_enricher,
+    verify_audit_trail,
+    SsfReceiver,
 )
 
 __all__ = [
@@ -69,6 +72,7 @@ __all__ = [
     "Authorizer",
     "AuthzHook",
     "Claim",
+    "ClientIdMetadata",
     "ColumnMaskStrategy",
     "ContextProvider",
     "DecisionEvent",
@@ -99,6 +103,7 @@ __all__ = [
     "RarMapping",
     "RecordFilterStrategy",
     "RetrievalConfig",
+    "SsfReceiver",
     "TokenVerificationError",
     "decode_bearer_jwt_unverified",
     "intent_enricher",
@@ -106,6 +111,7 @@ __all__ = [
     "prompt_injection_enricher",
     "standard_tool_enforcement",
     "toxicity_enricher",
+    "verify_audit_trail",
 ]
 
 # agents path — needs langchain

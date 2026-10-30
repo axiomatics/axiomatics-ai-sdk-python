@@ -70,7 +70,8 @@ config = AuthZConfig(..., hooks=[AuditLogHook(hash_chain=True)])
 | `decision`, `cached`, `detail` | as on `DecisionEvent` | |
 | `subject`, `environment` | every attribute sent, including `transaction_id` and any risk, posture or intent attributes | `subject`: the attributes that selected the dropped decisions |
 | `remediation`, `removed`, `reason` | | `cache_invalidation`, how many, why |
-| `previous_hash`, `hash` | with `hash_chain=True` | same |
+| `chain_id`, `seq`, `previous_hash`, `hash` | with `hash_chain=True` | same |
+| `signature` | with a `signing_key` | same |
 
 - **Sink.** By default each record is logged as one JSON line on the `axiomatics_ai.audit`
   logger at INFO, so any log pipeline or SIEM agent can collect it. Give that logger a handler
@@ -79,11 +80,62 @@ config = AuthZConfig(..., hooks=[AuditLogHook(hash_chain=True)])
 - **Sending to a SIEM URL.** Attach a `logging` handler that ships to it, or use a callable sink;
   [`examples/hooks/siem_webhook_sink.py`](../examples/hooks/siem_webhook_sink.py) posts records
   to a webhook.
-- **Hash chain.** With `hash_chain=True` each record carries the previous record's hash and its
-  own: SHA-256 over the record's JSON with sorted keys, including `previous_hash`, before `hash`
-  is added. The first record's `previous_hash` is empty. A deleted, inserted or edited record
-  breaks the chain, so the trail is tamper-evident. The chain lives in the process: a restart,
-  or each worker, starts a new one.
+- **Hash chain.** With `hash_chain=True` each record carries its chain's id, a sequence number
+  (`seq`, from 1), the previous record's hash and its own. The hash is SHA-256 over the record
+  without `hash` and `signature`, serialized as JSON with sorted keys, no spaces and non-ASCII
+  characters escaped. Each process (or forked worker) starts its own chain with a new `chain_id`. An edited, removed, inserted or
+  reordered record breaks the chain.
+- **Signing.** A chain alone can be recomputed by whoever can rewrite the log. Pass a private key
+  and each record also carries `signature`, a JWS over its `chain_id`, `seq` and `hash` (needs
+  the `jwt` extra). The default algorithm is `ES256` (ECDSA P-256 with SHA-256): approved in
+  FIPS 186-5 and supported by every cloud KMS and HSM. `EdDSA` (Ed25519) also works. Keep the
+  private key out of reach of whoever can edit the log; a key loaded into the same process
+  protects the stored trail, not against code running in that process.
+
+  ```python
+  hook = AuditLogHook(hash_chain=True, signing_key=open("audit-key.pem").read(), signing_key_id="audit-2026")
+  ```
+- **Verifying.** `verify_audit_trail(lines, public_key=...)` checks a stored trail, in written
+  order, and returns one line per problem, empty when intact. Pass the stored JSON lines rather
+  than parsed dicts: a line with a duplicate key is refused, since another parser could read the
+  other value. Records cut off the end of a chain, or a whole chain removed (one worker's, or
+  everything since a restart), leave no trace in the trail itself: ship it to an append-only
+  store, or keep each `chain_id` and its latest `hash` somewhere the writer can't change.
+
+  ```python
+  from axiomatics_ai import verify_audit_trail
+
+  with open("audit.jsonl") as lines:
+      assert verify_audit_trail(lines, public_key=public_key) == []
+  ```
+- **Formats.** Records are the SDK's own JSON. To feed an OCSF pipeline, map them in a callable
+  sink, and keep the original record (or its `chain_id`, `seq` and `hash`) so it still verifies.
+
+### Sending to OpenTelemetry
+
+OpenTelemetry's `LoggingHandler` turns Python log records into OpenTelemetry log records and
+exports them, usually over OTLP to a Collector that forwards them to your backend. Attach it to
+the `axiomatics_ai.audit` logger (needs `opentelemetry-sdk` and `opentelemetry-exporter-otlp`):
+
+```python
+import logging
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+
+provider = LoggerProvider()
+provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter(endpoint="http://collector:4318/v1/logs")))
+set_logger_provider(provider)
+
+audit = logging.getLogger("axiomatics_ai.audit")
+audit.setLevel(logging.INFO)
+audit.addHandler(LoggingHandler(level=logging.INFO, logger_provider=provider))
+```
+
+Each record arrives as one JSON string in the log body; most backends can parse it into fields.
+OpenTelemetry's Python logs API is still marked unstable (the `_logs` modules), so these import
+paths may change between releases.
 - **Durability** belongs to the sink and the store behind it (SIEM, append-only log), not to the
   SDK.
 - `agent_attribute`, `user_attribute` and `actor_attribute` name the subject attributes lifted to

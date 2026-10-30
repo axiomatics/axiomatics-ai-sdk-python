@@ -111,9 +111,10 @@ class HttpForwarder:
         path = scope.get("path", "")
         root = scope.get("root_path", "")
         sub_path = path[len(root):] if root and path.startswith(root) else path
-        if _has_dot_segment(sub_path):
-            # scope["path"] is percent-decoded, so "%2e%2e" is ".." here: forwarded, it would
-            # reach paths above (or beside) the target the route was authorized for.
+        if _has_dot_segment(sub_path) or "?" in sub_path or "#" in sub_path:
+            # scope["path"] is percent-decoded, so "%2e%2e" is ".." and "%3F" is "?" here:
+            # forwarded, they would reach paths above (or beside) the target the route was
+            # authorized for, or cut off the path the authorization saw (".../x%3F/agent-card.json").
             await _send_bad_request(send)
             return
         url = self.target_url + sub_path
@@ -178,7 +179,7 @@ def _has_dot_segment(path: str) -> bool:
 
 
 async def _send_bad_request(send: Send) -> None:
-    data = b'{"error": "Bad Request: the path has a . or .. segment."}'
+    data = b'{"error": "Bad Request: the path has a . or .. segment, or a ? or # in it."}'
     await send({
         "type": "http.response.start",
         "status": 400,

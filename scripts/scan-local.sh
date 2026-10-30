@@ -25,6 +25,8 @@ RUN_START=$SECONDS
 # Dependency gates are HIGH+, matching the Snyk threshold in the Jenkinsfile.
 SEVERITY="HIGH,CRITICAL"
 [[ "$AUDIT" == 1 ]] && SEVERITY="LOW,MEDIUM,HIGH,CRITICAL"
+SNYK_SEVERITY=high
+[[ "$AUDIT" == 1 ]] && SNYK_SEVERITY=low
 
 RUFF_AUDIT=(); SEMGREP_AUDIT=(); GITLEAKS_AUDIT=()
 if [[ "$AUDIT" == 1 ]]; then
@@ -38,6 +40,23 @@ fi
 # --no-default-groups. Scanning the shipped surface on its own is what makes the dependency
 # numbers meaningful; the examples group alone pulls in streamlit, pillow, tornado...
 SHIPPED_EXTRAS=(--extra all)
+
+# Accepted dependency findings on the shipped surface (see "Accepted risks" in MAINTAINERS.md).
+# Re-check when the capping package releases; AUDIT=1 drops the list.
+PIP_AUDIT_IGNORES=(
+  # opentelemetry-api < 1.45.1: quadratic `tracestate` parsing (DoS). Arrives via fastmcp; the
+  # lock holds 1.44 only because google-adk (examples) caps it. A fresh install gets 1.45.1+.
+  CVE-2026-114603
+  # filelock < 4.2.1: local multi-user attacks on lock files in shared directories. Arrives via
+  # litellm (llm-enrichment), which caps filelock < 4 in every release; the SDK never uses it.
+  CVE-2026-112907 CVE-2026-112908 CVE-2026-112909 CVE-2026-112910 CVE-2026-112911
+  CVE-2026-112912 CVE-2026-112913 CVE-2026-112915 CVE-2026-112935 CVE-2026-112936
+  CVE-2026-112938 CVE-2026-112939 CVE-2026-112940
+)
+PIP_AUDIT_IGNORE_ARGS=()
+if [[ "$AUDIT" != 1 ]]; then
+  for id in "${PIP_AUDIT_IGNORES[@]}"; do PIP_AUDIT_IGNORE_ARGS+=(--ignore-vuln "$id"); done
+fi
 
 # Cognitive-complexity ceiling. SonarQube's default rule (python:S3776) fails a function above
 # 15; complexipy implements the same metric so we can see it before Sonar does.
@@ -116,11 +135,49 @@ if want deps; then
   phase "deps"
   # --no-deps: uv export already emits the pinned transitive set. --disable-pip: stops pip-audit
   # building a throwaway venv, whose ensurepip aborts under uv-managed Python 3.14.
+  # A package the lock forks by Python version (numpy for 3.11 vs 3.12+) appears twice once the
+  # markers are stripped, which pip-audit rejects; the second pins are audited as their own file.
   PIP_AUDIT=(pip-audit); have pip-audit || PIP_AUDIT=(uvx pip-audit)
-  run "pip-audit (shipped extras, HIGH+ gate)" bash -c '
-    uv export --no-default-groups --no-hashes --no-annotate --no-header --no-emit-project "$@" -o "'"$REPORTS"'/requirements-shipped.raw.txt" \
-    && sed -E "s/[[:space:]]*;.*$//" "'"$REPORTS"'/requirements-shipped.raw.txt" | grep -E "^[A-Za-z0-9_.-]+==" > "'"$REPORTS"'/requirements-shipped.txt" \
-    && '"${PIP_AUDIT[*]}"' --strict --no-deps --disable-pip --progress-spinner off -r "'"$REPORTS"'/requirements-shipped.txt"' _ "${SHIPPED_EXTRAS[@]}"
+  # shellcheck disable=SC2329  # invoked through run below
+  audit_shipped() {
+    local pins="$REPORTS/requirements-shipped.pins.txt" first="$REPORTS/requirements-shipped.txt"
+    local forks="$REPORTS/requirements-shipped-forks.txt"
+    local audit=("${PIP_AUDIT[@]}" --strict --no-deps --disable-pip --progress-spinner off
+                 ${PIP_AUDIT_IGNORE_ARGS[@]+"${PIP_AUDIT_IGNORE_ARGS[@]}"})
+    rm -f "$pins"  # the snyk step reads it; a failed export must not leave a stale one
+    uv export --no-default-groups --no-hashes --no-annotate --no-header --no-emit-project \
+      "${SHIPPED_EXTRAS[@]}" -o "$REPORTS/requirements-shipped.raw.txt" || return
+    sed -E 's/[[:space:]]*;.*$//' "$REPORTS/requirements-shipped.raw.txt" | grep -E '^[A-Za-z0-9_.-]+==' > "$pins" || return
+    awk -F== '!seen[$1]++' "$pins" > "$first"
+    awk -F== 'seen[$1]++' "$pins" > "$forks"
+    "${audit[@]}" -r "$first" || return
+    [[ ! -s "$forks" ]] || "${audit[@]}" -r "$forks"
+  }
+  run "pip-audit (shipped extras, HIGH+ gate)" audit_shipped
+  # Snyk, as the Jenkins stage runs it: the same exported pins, resolved against a venv holding
+  # only the shipped extras (build/snyk-venv, never the dev .venv), policy from .snyk. Optional:
+  # skipped without the CLI or a login (`snyk auth`); SNYK_ORG picks an org other than your default.
+  # shellcheck disable=SC2329  # invoked through run below
+  snyk_shipped() {
+    local venv="$ROOT/build/snyk-venv" pins="$REPORTS/requirements-shipped.pins.txt"
+    local args=(--file="$pins" --package-manager=pip --command="$venv/bin/python"
+                --severity-threshold="$SNYK_SEVERITY" --json-file-output="$REPORTS/snyk.json")
+    [[ -s "$pins" ]] || { echo "no exported requirements: the pip-audit step failed before writing them"; return 1; }
+    [[ -f .snyk && "$AUDIT" != 1 ]] && args+=(--policy-path=.snyk)
+    [[ "$AUDIT" == 1 ]] && args+=(--policy-path="$REPORTS")  # no .snyk there: ignores off
+    [[ -n "${SNYK_ORG:-}" ]] && args+=(--org="$SNYK_ORG")
+    UV_PROJECT_ENVIRONMENT="$venv" uv sync -q --frozen --no-default-groups "${SHIPPED_EXTRAS[@]}" || return
+    uv pip install -q --python "$venv/bin/python" pip setuptools wheel || return
+    snyk test "${args[@]}" -- --allow-missing
+  }
+  if skip_unless "snyk" snyk; then
+    if snyk whoami --experimental >/dev/null 2>&1; then
+      run "snyk test (shipped extras, HIGH+ gate)" snyk_shipped
+    else
+      printf '\033[33m  · [%s] SKIP   snyk test — not logged in (run snyk auth)\033[0m\n' "$(stamp)"
+      SKIPPED+=("snyk test — not logged in (run snyk auth)")
+    fi
+  fi
   if skip_unless "trivy" trivy; then
     info "trivy fs (full uv.lock incl. examples/dev, informational)" \
       trivy fs --severity "$SEVERITY" --ignore-unfixed --exit-code 0 --scanners vuln,misconfig \

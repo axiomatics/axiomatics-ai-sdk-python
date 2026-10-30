@@ -6,7 +6,154 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-30
+
+### Added
+- **Tamper-evident audit** — `AuditLogHook(hash_chain=True)` records carry `chain_id` and `seq`,
+  and with `signing_key=` a JWS signature (`ES256` by default, or `EdDSA`).
+  `verify_audit_trail(records, public_key=...)` checks a stored trail.
+- **Shared Signals** — `SsfReceiver`, a push endpoint (RFC 8935) for SSF / CAEP / RISC events: it
+  verifies each Security Event Token and drops the subject's cached decisions, recorded by
+  `AuditLogHook` as a remediation.
+- **Client ID Metadata Documents** — `AgentIdentityContextProvider(client_metadata=ClientIdMetadata(...))`
+  sends a CIMD client's host (`client_host`) and, with `fetch=True`, fields of its metadata
+  document (`client_name`, `client_auth_method`), fetched only from public addresses.
+
 ### Changed
+- **audit** — the chained hash is over the record without `hash` and `signature`, as JSON with
+  sorted keys, no spaces and non-ASCII escaped (was: with spaces). A trail written before this
+  needs the old check.
+
+### Security
+- **gateway** — an A2A route refuses a path with a decoded `?` or `#` (HTTP 400): forwarded, it
+  cut off the path that was authorized, so `…/tasks/1%3F/.well-known/agent-card.json` passed as
+  the public card and returned the task.
+- **post-invocation** — an MCP result whose `structuredContent` is only a summary has its text
+  blocks filtered too; the records in them reached the model unfiltered.
+- **fastmcp** — a call whose argument type the tool's input schema doesn't allow is refused before
+  the PDP is asked (the tool ran on the coerced value the PDP never saw).
+- **fastmcp / tool-decorator / gateway** — the extras require `fastmcp>=3.4.10`, which checks
+  component authorization after transforms and no longer serves a denied resource through a
+  matching template.
+
+## [0.1.0] - 2026-10-27
+
+Initial release — externalized ABAC for AI agents and tools. Decisions come from a Policy
+Decision Point over XACML 3.0 JSON or OpenID AuthZEN; tested against Axiomatics ADS.
+
+### Added
+- **Agent identity on client paths** — `AgentIdentityContextProvider(token_from=...)` verifies a
+  token the agent received (e.g. behind your own API), and `claims_from=...` maps claims an agent
+  platform already verified (LangGraph Platform auth, AgentCore Runtime).
+- **Core** — `AuthZConfig`, `PDPConnection` with configurable `PdpEndpoints` (ADS paths by
+  default), `PdpClient` in `axiomatics_ai.core.pdp` (XACML JSON + AuthZEN, single and batch), decision cache, pluggable
+  context providers (`DefaultClientContextProvider`, `DefaultServerContextProvider`), and
+  post-invocation strategies (`RecordFilterStrategy`, `ColumnMaskStrategy`).
+- **direct** — `Authorizer(config)` for applications without a framework adapter:
+  `is_permitted`, `is_permitted_batch`, `partial_evaluation`, `partial_evaluation_text`.
+- **langchain_agents** — `create_agent` middleware (`create_authorized_agent` /
+  `LangChainAgentAuthZMiddleware`) with input/output content guards, tool visibility,
+  tool-call authorization, and post-invocation. Includes deepagents (`create_authorized_deep_agent`).
+- **langchain_mcp** — filter MCP tools before they reach a LangGraph graph.
+- **rag** — authorization-filtered retrieval; a partial-evaluation reverse query (Axiomatics
+  ADS CAQ) returns the permitted condition, pushed into the vector store as a metadata filter.
+- **fastmcp** — server-side FastMCP middleware (visibility / invocation / post-invocation).
+- **tool_decorator** — per-tool post-invocation via `@protected_tool`.
+- **google_adk**, **strands**, **openai_agents**, **claude_agent** — client-side
+  authorization for the respective agent frameworks (`authorized_adk_agent`,
+  `authorized_strands_agent`, `authorized_openai_agent`, `authorized_claude_options`).
+- **a2a** — Agent2Agent authorization at the wire layer: `A2AAuthZMiddleware` (server) and
+  `A2AClientAuthZ` (client egress). Framework- and a2a-sdk-version-agnostic.
+- **gateway** (experimental, not production grade; will move to its own package) — a
+  standalone reverse proxy that authorizes A2A and MCP traffic in front of the servers you
+  run; one gateway fronts many A2A agents and MCP servers. Configure it with
+  `GatewayConfig(routes=[...], authz=AuthZConfig(...))` and import it from `axiomatics_ai.gateway`.
+- **Content guards** — LLM-enricher input/output guards (`BEFORE_MODEL` / `AFTER_MODEL`) with
+  ready-made presets (`prompt_injection_enricher`, `pii_enricher`, `toxicity_enricher`).
+- **Intent-based access control** — `intent_enricher` at `BEFORE_TOOL` classifies the user's own
+  recent messages (never tool output or assistant text) into environment attributes
+  (`intent_actions`, `intent_<action>_recipients`, `intent_available`), so a policy can deny a
+  tool call the user did not ask for, such as one planted by indirect prompt injection. Client
+  paths only; on server paths intent is unavailable and fails closed.
+- **Enricher caching and placement** — `EnricherSpec.cache_ttl_seconds` / `cache_maxsize` reuse
+  a classification for identical content; `allowed_points` (set by the presets) lets
+  `AuthZConfig.validate()` warn about an enricher placed at the wrong enforcement point.
+- **Attribute contract** — the tool is sent as `tool_name` at tool visibility, invocation, and
+  post-invocation, and the target agent as `agent_name` at A2A (both configurable on
+  `AuthZConfig.attribute_names`: `AttributeNames(tool=..., agent=...)`). Tool arguments are sent as
+  resource attributes of the same name; an argument named like the identifier is dropped
+  with a warning, so the model cannot change which tool the policy sees.
+- **Observability** — observe-only hooks (`AuthzHook`, `LoggingHook`) firing on every path.
+  `DecisionEvent` carries the request's `environment` and a `timestamp`.
+- **Verified agent identity** — `AgentIdentityContextProvider` with `JwtVerification` verifies
+  bearer tokens on the server paths (RFC 9068 §4: signature via OIDC discovery or `jwks_url`,
+  `iss`, `aud`, `exp`, `at+jwt` type, asymmetric algorithms only) and sends named attributes:
+  `user_id` (only when a user is present), `agent_id` (`client_id`), `actor_id` (current `act`),
+  `scopes`, `acr`, `amr`, `auth_time`, and `transaction_id` (`txn`). Extra claims are mapped
+  explicitly (`claims=`, `Claim`); names are configurable (`AgentIdentityAttributes`);
+  `preview()` shows the result. A token that fails verification yields an empty subject.
+- **Rich Authorization Requests** — `RarMapping` maps exactly one matching RFC 9396
+  `authorization_details` entry to `approved_*` attributes; separate grants are never merged.
+- **Client-side agent identity** — `DefaultClientContextProvider` sends `agent_id` from the
+  runtime context.
+- **Value guard** — every PDP request drops objects, nested lists and mixed-type lists (one
+  warning per attribute), so no tool argument, claim or record field can make a request invalid.
+- **Revocation** — cached decisions expire no later than the verified token's `exp`;
+  `AuthZConfig.invalidate_decisions(reason=..., **subject)` drops them across every cache built
+  from the config and emits `on_invalidation` (`InvalidationEvent`).
+- **Audit** — `AuditLogHook`: one JSON record per decision and per invalidation (agent, user,
+  actor, resource, action, decision, environment, timestamp, correlation id), to the
+  `axiomatics_ai.audit` logger or a callable sink, with an optional hash chain.
+- **Gateway** — no token passthrough: the caller's `Authorization` header is stripped on MCP and
+  A2A routes unless `Route(forward_authorization=True)`; `Route(audience=...)` verifies per
+  upstream resource server.
+- **Obligations and advice** — the PDP client reads XACML `Obligations` / `AssociatedAdvice`
+  and ADS's AuthZEN `context.xacml` block into `Obligation` / `Advice` on a `PdpDecision`
+  (`Decision` enum). `AuthZConfig(obligations_and_advice=ObligationsAndAdviceConfig(...))`:
+  obligation `handlers` run on every decision (cache hits included); an obligation with no
+  handler turns a Permit into a Deny (`on_unknown="deny"`, per XACML; `"ignore"` to permit);
+  advice is advisory. Applied on every path, including `check_permission` and batch decisions.
+- **Human approval of tool calls** — a policy asks for approval with `require-approval` as
+  Deny + advice (after approval the PDP is asked again with `approval_granted = true`) or
+  Permit + obligation (the approval fulfils it; one PDP call). The answer comes from the
+  framework's own pause and resume — LangGraph `interrupt()`, ADK tool confirmation, a Strands
+  interrupt, the OpenAI Agents approval flow (`needs_approval`), MCP elicitation on FastMCP — or
+  from an `approver` callback (sync or async; the only way on the Claude Agent SDK).
+  `ApprovalConfig(obligation_or_advice_ids=...)` sets which ids ask for approval; several on one
+  decision make one request (all `reasons`, the smallest `ttl`), answered once. Approvals are
+  bound to the call's arguments; a `ttl` makes one reusable, and `invalidate_decisions()` drops
+  it. Decision events log `approval_required`, `approved` /
+  `rejected` and the final decision (`evaluated_again`). A call that can't be approved is denied
+  with "was not approved". Examples per framework on `domain_human_approval.yaml`.
+- `DefaultServerContextProvider` still reads tokens unverified, and now logs a one-time warning
+  saying so.
+- Packaging: PEP 517 build (hatchling), `py.typed`, `requires-python >=3.11`, and per-path
+  optional-dependency extras.
+- Documentation under `docs/`: a sequential guide, one page per integration, architecture,
+  running ADS, and agent identity and AIMS alignment; example policies under `examples/policies/`.
+- The `jwt` extra (PyJWT, for decoding or verifying bearer tokens) and the `deepagents` extra.
+- `Route(mcp_resources_and_prompts=...)` for gateway MCP routes.
+- A "Known limitations" section in [Security](docs/security.md#known-limitations).
+- `AttributeNames.acting_agent` (default `agent_name`): the subject attribute naming the agent or
+  sub-agent in the app making the call, so one policy can treat sub-agents differently.
+  `AuditLogHook` records it as `agent_name`.
+- `A2AAuthZMiddleware(public_paths=...)`: more paths served to anyone with `GET` / `HEAD`.
+- `PDPConnection(headers=..., auth=..., verify=..., cert=..., http_client=...)`: authentication
+  (an API-key header, Basic, or an `httpx.Auth` for bearer tokens), TLS (a CA bundle, mTLS
+  client certificate), or your own `httpx.Client`. `PdpClient.close()` and context-manager use.
+- `PermittedNames`: the result of a batch check, a `set` with `answered` (False when some name
+  was resolved by `fail_open`).
+- `GatewayConfig(allow_unverified_tokens=..., public_url=...)`; `public_url` replaces the
+  client's `Host` header when rewriting A2A agent cards.
+- `Enforcer(on_unrecognized_output="fail_open" | "fail_closed")` for `AFTER_TOOL`:
+  `fail_closed` withholds tool output the strategy cannot inspect.
+- `ApprovalDecision(asked=False)` marks a refusal where no human could be asked.
+- `authorized_tool_invocation(args=..., call_id=...)` and `needs_human_approval(args=..., call_id=...)`
+  for adapters: the call's own arguments and the framework's tool-call id.
+
+### Changed
+Against the pre-release builds shared before the first public release.
+
 - **fastmcp / tool_decorator / a2a** — a request with more than one `Authorization` header is
   treated as anonymous (denied): authentication in front checks the first header, the SDK read
   the last, so a caller could pass with their own token and be decided as someone else.
@@ -162,7 +309,6 @@ All notable changes to this project are documented here. The format is based on
   `Content-Encoding` for a body httpx already decoded, keeps repeated `Set-Cookie` headers
   apart, and closes its HTTP client on shutdown. The agent-card rewrite also covers the legacy
   `/.well-known/agent.json`.
-
 - **sub-agents** — sub-agents get the config of the agent you authorize: every deepagents
   sub-agent (including the general-purpose one; a compiled sub-agent must come from our
   factories, else `ValueError`), ADK `sub_agents` and `AgentTool` agents, OpenAI handoff targets
@@ -177,122 +323,6 @@ All notable changes to this project are documented here. The format is based on
 - `ResourceNameAttributes` is renamed `AttributeNames`, and `AuthZConfig.resource_name_attributes`
   is `AuthZConfig.attribute_names`.
 
-### Added
-- The `jwt` extra (PyJWT, for decoding or verifying bearer tokens) and the `deepagents` extra.
-- `Route(mcp_resources_and_prompts=...)` for gateway MCP routes.
-- A "Known limitations" section in [Security](docs/security.md#known-limitations).
-- `AttributeNames.acting_agent` (default `agent_name`): the subject attribute naming the agent or
-  sub-agent in the app making the call, so one policy can treat sub-agents differently.
-  `AuditLogHook` records it as `agent_name`.
-- `A2AAuthZMiddleware(public_paths=...)`: more paths served to anyone with `GET` / `HEAD`.
-- `PDPConnection(headers=..., auth=..., verify=..., cert=..., http_client=...)`: authentication
-  (an API-key header, Basic, or an `httpx.Auth` for bearer tokens), TLS (a CA bundle, mTLS
-  client certificate), or your own `httpx.Client`. `PdpClient.close()` and context-manager use.
-- `PermittedNames`: the result of a batch check, a `set` with `answered` (False when some name
-  was resolved by `fail_open`).
-- `GatewayConfig(allow_unverified_tokens=..., public_url=...)`; `public_url` replaces the
-  client's `Host` header when rewriting A2A agent cards.
-- `Enforcer(on_unrecognized_output="fail_open" | "fail_closed")` for `AFTER_TOOL`:
-  `fail_closed` withholds tool output the strategy cannot inspect.
-- `ApprovalDecision(asked=False)` marks a refusal where no human could be asked.
-- `authorized_tool_invocation(args=..., call_id=...)` and `needs_human_approval(args=..., call_id=...)`
-  for adapters: the call's own arguments and the framework's tool-call id.
-
-## [0.1.0]
-
-Initial release — externalized ABAC for AI agents and tools. Decisions come from a Policy
-Decision Point over XACML 3.0 JSON or OpenID AuthZEN; tested against Axiomatics ADS.
-
-### Added
-- **Agent identity on client paths** — `AgentIdentityContextProvider(token_from=...)` verifies a
-  token the agent received (e.g. behind your own API), and `claims_from=...` maps claims an agent
-  platform already verified (LangGraph Platform auth, AgentCore Runtime).
-- **Core** — `AuthZConfig`, `PDPConnection` with configurable `PdpEndpoints` (ADS paths by
-  default), `PdpClient` in `axiomatics_ai.core.pdp` (XACML JSON + AuthZEN, single and batch), decision cache, pluggable
-  context providers (`DefaultClientContextProvider`, `DefaultServerContextProvider`), and
-  post-invocation strategies (`RecordFilterStrategy`, `ColumnMaskStrategy`).
-- **direct** — `Authorizer(config)` for applications without a framework adapter:
-  `is_permitted`, `is_permitted_batch`, `partial_evaluation`, `partial_evaluation_text`.
-- **langchain_agents** — `create_agent` middleware (`create_authorized_agent` /
-  `LangChainAgentAuthZMiddleware`) with input/output content guards, tool visibility,
-  tool-call authorization, and post-invocation. Includes deepagents (`create_authorized_deep_agent`).
-- **langchain_mcp** — filter MCP tools before they reach a LangGraph graph.
-- **rag** — authorization-filtered retrieval; a partial-evaluation reverse query (Axiomatics
-  ADS CAQ) returns the permitted condition, pushed into the vector store as a metadata filter.
-- **fastmcp** — server-side FastMCP middleware (visibility / invocation / post-invocation).
-- **tool_decorator** — per-tool post-invocation via `@protected_tool`.
-- **google_adk**, **strands**, **openai_agents**, **claude_agent** — client-side
-  authorization for the respective agent frameworks (`authorized_adk_agent`,
-  `authorized_strands_agent`, `authorized_openai_agent`, `authorized_claude_options`).
-- **a2a** — Agent2Agent authorization at the wire layer: `A2AAuthZMiddleware` (server) and
-  `A2AClientAuthZ` (client egress). Framework- and a2a-sdk-version-agnostic.
-- **gateway** (experimental, not production grade; will move to its own package) — a
-  standalone reverse proxy that authorizes A2A and MCP traffic in front of the servers you
-  run; one gateway fronts many A2A agents and MCP servers. Configure it with
-  `GatewayConfig(routes=[...], authz=AuthZConfig(...))` and import it from `axiomatics_ai.gateway`.
-- **Content guards** — LLM-enricher input/output guards (`BEFORE_MODEL` / `AFTER_MODEL`) with
-  ready-made presets (`prompt_injection_enricher`, `pii_enricher`, `toxicity_enricher`).
-- **Intent-based access control** — `intent_enricher` at `BEFORE_TOOL` classifies the user's own
-  recent messages (never tool output or assistant text) into environment attributes
-  (`intent_actions`, `intent_<action>_recipients`, `intent_available`), so a policy can deny a
-  tool call the user did not ask for, such as one planted by indirect prompt injection. Client
-  paths only; on server paths intent is unavailable and fails closed.
-- **Enricher caching and placement** — `EnricherSpec.cache_ttl_seconds` / `cache_maxsize` reuse
-  a classification for identical content; `allowed_points` (set by the presets) lets
-  `AuthZConfig.validate()` warn about an enricher placed at the wrong enforcement point.
-- **Attribute contract** — the tool is sent as `tool_name` at tool visibility, invocation, and
-  post-invocation, and the target agent as `agent_name` at A2A (both configurable on
-  `AuthZConfig.attribute_names`: `AttributeNames(tool=..., agent=...)`). Tool arguments are sent as
-  resource attributes of the same name; an argument named like the identifier is dropped
-  with a warning, so the model cannot change which tool the policy sees.
-- **Observability** — observe-only hooks (`AuthzHook`, `LoggingHook`) firing on every path.
-  `DecisionEvent` carries the request's `environment` and a `timestamp`.
-- **Verified agent identity** — `AgentIdentityContextProvider` with `JwtVerification` verifies
-  bearer tokens on the server paths (RFC 9068 §4: signature via OIDC discovery or `jwks_url`,
-  `iss`, `aud`, `exp`, `at+jwt` type, asymmetric algorithms only) and sends named attributes:
-  `user_id` (only when a user is present), `agent_id` (`client_id`), `actor_id` (current `act`),
-  `scopes`, `acr`, `amr`, `auth_time`, and `transaction_id` (`txn`). Extra claims are mapped
-  explicitly (`claims=`, `Claim`); names are configurable (`AgentIdentityAttributes`);
-  `preview()` shows the result. A token that fails verification yields an empty subject.
-- **Rich Authorization Requests** — `RarMapping` maps exactly one matching RFC 9396
-  `authorization_details` entry to `approved_*` attributes; separate grants are never merged.
-- **Client-side agent identity** — `DefaultClientContextProvider` sends `agent_id` from the
-  runtime context.
-- **Value guard** — every PDP request drops objects, nested lists and mixed-type lists (one
-  warning per attribute), so no tool argument, claim or record field can make a request invalid.
-- **Revocation** — cached decisions expire no later than the verified token's `exp`;
-  `AuthZConfig.invalidate_decisions(reason=..., **subject)` drops them across every cache built
-  from the config and emits `on_invalidation` (`InvalidationEvent`).
-- **Audit** — `AuditLogHook`: one JSON record per decision and per invalidation (agent, user,
-  actor, resource, action, decision, environment, timestamp, correlation id), to the
-  `axiomatics_ai.audit` logger or a callable sink, with an optional hash chain.
-- **Gateway** — no token passthrough: the caller's `Authorization` header is stripped on MCP and
-  A2A routes unless `Route(forward_authorization=True)`; `Route(audience=...)` verifies per
-  upstream resource server.
-- **Obligations and advice** — the PDP client reads XACML `Obligations` / `AssociatedAdvice`
-  and ADS's AuthZEN `context.xacml` block into `Obligation` / `Advice` on a `PdpDecision`
-  (`Decision` enum). `AuthZConfig(obligations_and_advice=ObligationsAndAdviceConfig(...))`:
-  obligation `handlers` run on every decision (cache hits included); an obligation with no
-  handler turns a Permit into a Deny (`on_unknown="deny"`, per XACML; `"ignore"` to permit);
-  advice is advisory. Applied on every path, including `check_permission` and batch decisions.
-- **Human approval of tool calls** — a policy asks for approval with `require-approval` as
-  Deny + advice (after approval the PDP is asked again with `approval_granted = true`) or
-  Permit + obligation (the approval fulfils it; one PDP call). The answer comes from the
-  framework's own pause and resume — LangGraph `interrupt()`, ADK tool confirmation, a Strands
-  interrupt, the OpenAI Agents approval flow (`needs_approval`), MCP elicitation on FastMCP — or
-  from an `approver` callback (sync or async; the only way on the Claude Agent SDK).
-  `ApprovalConfig(obligation_or_advice_ids=...)` sets which ids ask for approval; several on one
-  decision make one request (all `reasons`, the smallest `ttl`), answered once. Approvals are
-  bound to the call's arguments; a `ttl` makes one reusable, and `invalidate_decisions()` drops
-  it. Decision events log `approval_required`, `approved` /
-  `rejected` and the final decision (`evaluated_again`). A call that can't be approved is denied
-  with "was not approved". Examples per framework on `domain_human_approval.yaml`.
-- `DefaultServerContextProvider` still reads tokens unverified, and now logs a one-time warning
-  saying so.
-- Packaging: PEP 517 build (setuptools), `py.typed`, `requires-python >=3.11`, and per-path
-  optional-dependency extras.
-- Documentation under `docs/`: a sequential guide, one page per integration, architecture,
-  running ADS, and agent identity and AIMS alignment; example policies under `examples/policies/`.
-
-[Unreleased]: https://github.com/axiomatics/axiomatics-ai-sdk-python/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/axiomatics/axiomatics-ai-sdk-python/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/axiomatics/axiomatics-ai-sdk-python/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/axiomatics/axiomatics-ai-sdk-python/releases/tag/v0.1.0
